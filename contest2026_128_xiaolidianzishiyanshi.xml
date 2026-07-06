@@ -12,5 +12,7 @@
     <linkfile src="app/hello_app" dest="packages/demos/contest2026_128_hello_app"/>
     <linkfile src="quickapp/hello_quickapp" dest="packages/apps/contest2026_128_hello_quickapp"/>
     <linkfile src="board/contest_board" dest="vendor/openvela/boards/contest2026_128_board"/>
+    <linkfile src="board/esp32p4" dest="vendor/espressif/boards/esp32p4"/>
+    <linkfile src="chip/esp32p4" dest="vendor/espressif/chips/esp32p4"/>
   </project>
 </manifest>
