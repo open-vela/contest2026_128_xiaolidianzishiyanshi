@@ -63,4 +63,25 @@ if(CONFIG_ESPRESSIF_BOOTLOADER_MCUBOOT OR CONFIG_ESPRESSIF_SIMPLE_BOOT)
   endif()
 endif()
 
-set_property(GLOBAL APPEND PROPERTY LD_SCRIPT ${LDSCRIPTS})
+# Concatenate ALL linker scripts (ROM from chip + board) into a single file,
+# because the openvela NuttX CMakeLists.txt does not handle LD_SCRIPT as a
+# list (upstream NuttX has a foreach fix that openvela hasn't adopted).
+# Board is processed after chip, so LD_SCRIPT already contains ROM scripts.
+
+# Collect all scripts: chip's ROM scripts + board scripts
+get_property(_all_ld_scripts GLOBAL PROPERTY LD_SCRIPT)
+list(APPEND _all_ld_scripts ${LDSCRIPTS})
+
+set(_combined_ld "${CMAKE_BINARY_DIR}/esp32p4_all.ld")
+file(WRITE ${_combined_ld} "")
+foreach(_ld ${_all_ld_scripts})
+  file(READ ${_ld} _ld_content)
+  file(APPEND ${_combined_ld} "${_ld_content}\n")
+endforeach()
+
+# Also copy common.ld next to the combined linker script so the preprocessor
+# can include it
+file(COPY "${BOARD_COMMON_DIR}/scripts/common.ld" DESTINATION "${CMAKE_BINARY_DIR}")
+
+# Replace LD_SCRIPT with the single combined file
+set_property(GLOBAL PROPERTY LD_SCRIPT ${_combined_ld})
