@@ -28,7 +28,7 @@
 
 #include <stdint.h>
 #include <assert.h>
-#include <nuttx/debug.h>
+#include <debug.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>

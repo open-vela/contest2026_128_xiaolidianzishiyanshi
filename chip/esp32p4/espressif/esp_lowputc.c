@@ -27,7 +27,7 @@
 #include <nuttx/config.h>
 
 #include <assert.h>
-#include <nuttx/debug.h>
+#include <debug.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -37,6 +37,8 @@
 
 #include <nuttx/arch.h>
 #include <nuttx/irq.h>
+#include <nuttx/kmalloc.h>
+#include <nuttx/mutex.h>
 #include <nuttx/spinlock.h>
 
 #include "chip.h"

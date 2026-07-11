@@ -28,7 +28,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
-#include <nuttx/debug.h>
+#include <debug.h>
 #include <semaphore.h>
 
 #include <nuttx/mutex.h>

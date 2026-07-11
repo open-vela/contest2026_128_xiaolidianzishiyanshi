@@ -31,7 +31,7 @@
 /* Libc */
 
 #include <assert.h>
-#include <nuttx/debug.h>
+#include <debug.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>

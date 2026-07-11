@@ -32,7 +32,7 @@
 #include <stdint.h>
 #include <assert.h>
 
-#include <nuttx/debug.h>
+#include <debug.h>
 #include <nuttx/mutex.h>
 #include <sys/types.h>
 #include <inttypes.h>

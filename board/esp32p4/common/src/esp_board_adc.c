@@ -28,6 +28,7 @@
 #include <stdio.h>
 #include <syslog.h>
 
+#include <nuttx/kmalloc.h>
 #include <nuttx/analog/adc.h>
 
 #include "espressif/esp_adc.h"

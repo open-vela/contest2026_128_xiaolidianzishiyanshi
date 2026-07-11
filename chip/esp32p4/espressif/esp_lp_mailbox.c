@@ -27,7 +27,7 @@
 #include <nuttx/arch.h>
 #include <nuttx/irq.h>
 
-#include <nuttx/debug.h>
+#include <debug.h>
 
 #include "lp_core_mailbox.h"
 

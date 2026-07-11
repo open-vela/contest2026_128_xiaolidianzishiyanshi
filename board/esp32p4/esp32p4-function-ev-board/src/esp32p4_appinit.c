@@ -1,5 +1,5 @@
 /****************************************************************************
- * boards/risc-v/esp32p4/common/src/esp_board_twai.c
+ * boards/risc-v/esp32p4/esp32p4-function-ev-board/src/esp32p4_appinit.c
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -26,74 +26,58 @@
 
 #include <nuttx/config.h>
 
-#include <errno.h>
-#include <stdio.h>
-#include <debug.h>
+#include <sys/types.h>
 
-#include <nuttx/can/can.h>
-#include <arch/board/board.h>
+#include <nuttx/board.h>
 
-#include "espressif/esp_twai.h"
+#include "esp32p4-function-ev-board.h"
 
-#ifdef CONFIG_CAN
+#ifdef CONFIG_BOARDCTL
 
 /****************************************************************************
  * Pre-processor Definitions
  ****************************************************************************/
-
-#define DEVNAME_FMT    "/dev/can%d"
-#define DEVNAME_FMTLEN (8 + 3 + 1)
 
 /****************************************************************************
  * Public Functions
  ****************************************************************************/
 
 /****************************************************************************
- * Name: board_twai_setup
+ * Name: board_app_initialize
  *
  * Description:
- *  Initialize TWAI and register the TWAI device
+ *   Perform application specific initialization.  This function is never
+ *   called directly from application code, but only indirectly via the
+ *   (non-standard) boardctl() interface using the command BOARDIOC_INIT.
  *
  * Input Parameters:
- *   port - Port number (for hardware that has multiple TWAI interfaces)
+ *   arg - The boardctl() argument is passed to the board_app_initialize()
+ *         implementation without modification.  The argument has no
+ *         meaning to NuttX; the meaning of the argument is a contract
+ *         between the board-specific initialization logic and the
+ *         matching application logic.  The value could be such things as a
+ *         mode enumeration value, a set of DIP switch settings, a
+ *         pointer to configuration data read from a file or serial FLASH,
+ *         or whatever you would like to do with it.  Every implementation
+ *         should accept zero/NULL as a default configuration.
  *
  * Returned Value:
- *   Zero (OK) is returned on success; A negated errno value is returned on
- *   any failure.
+ *   Zero (OK) is returned on success; a negated errno value is returned on
+ *   any failure to indicate the nature of the failure.
  *
  ****************************************************************************/
 
-int board_twai_setup(int port)
+int board_app_initialize(uintptr_t arg)
 {
-#ifdef CONFIG_ESPRESSIF_TWAI
-  struct can_dev_s *twai;
-  char devname[DEVNAME_FMTLEN];
-  int ret;
-
-  /* Call esp_twaiinitialize() to get an instance of the TWAI
-   * interface
-   * */
-
-  twai = esp_twaiinitialize(port);
-  if (twai == NULL)
-    {
-      canerr("ERROR: Failed to get TWAI interface for port %d\n", port);
-      return -ENODEV;
-    }
-
-  snprintf(devname, sizeof(devname), DEVNAME_FMT, port);
-
-  ret = can_register(devname, twai);
-  if (ret < 0)
-    {
-      canerr("ERROR: TWAI%d register failed: %d\n", port, ret);
-      return ret;
-    }
+#ifdef CONFIG_BOARD_LATE_INITIALIZE
+  /* Board initialization already performed by board_late_initialize() */
 
   return OK;
 #else
-  return -ENODEV;
+  /* Perform board-specific initialization */
+
+  return esp_bringup();
 #endif
 }
 
-#endif /* CONFIG_CAN */
+#endif /* CONFIG_BOARDCTL */

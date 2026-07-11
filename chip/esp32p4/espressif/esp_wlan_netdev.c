@@ -27,7 +27,7 @@
 #include <nuttx/config.h>
 
 #include <errno.h>
-#include <nuttx/debug.h>
+#include <debug.h>
 #include <arpa/inet.h>
 
 #include <nuttx/wireless/wireless.h>
@@ -458,7 +458,7 @@ static int esp_wlan_connect(struct netdev_lowerhalf_s *dev)
               break;
             }
 
-          nxsched_usleep(timeout);
+          nxsig_usleep(timeout);
           timeout_count--;
         }
 

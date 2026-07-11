@@ -26,13 +26,14 @@
 
 #include <nuttx/config.h>
 
-#include <nuttx/debug.h>
+#include <debug.h>
 #include <sys/types.h>
 
 #include <arch/board/board.h>
 #include <nuttx/arch.h>
 #include <nuttx/board.h>
 #include <nuttx/mm/mm.h>
+#include <nuttx/kmalloc.h>
 
 #include "riscv_internal.h"
 #include "rom/rom_layout.h"

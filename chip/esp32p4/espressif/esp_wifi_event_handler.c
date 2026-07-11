@@ -26,7 +26,7 @@
 
 #include <nuttx/config.h>
 
-#include <nuttx/debug.h>
+#include <debug.h>
 #include <nuttx/signal.h>
 #include <nuttx/wqueue.h>
 

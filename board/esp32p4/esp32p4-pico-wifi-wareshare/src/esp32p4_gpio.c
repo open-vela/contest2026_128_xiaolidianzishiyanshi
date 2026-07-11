@@ -33,7 +33,7 @@
 #include <sys/types.h>
 #include <syslog.h>
 #include <assert.h>
-#include <nuttx/debug.h>
+#include <debug.h>
 
 /* NuttX */
 

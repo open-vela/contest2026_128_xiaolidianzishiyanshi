@@ -26,7 +26,7 @@
 
 #include <inttypes.h>
 #include <assert.h>
-#include <nuttx/debug.h>
+#include <debug.h>
 #include <math.h>
 
 #include "esp_mac.h"

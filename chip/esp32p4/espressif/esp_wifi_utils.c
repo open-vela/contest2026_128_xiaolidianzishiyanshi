@@ -28,7 +28,7 @@
 
 #include <assert.h>
 #include <errno.h>
-#include <nuttx/debug.h>
+#include <debug.h>
 #include <netinet/arp.h>
 #include <sys/param.h>
 

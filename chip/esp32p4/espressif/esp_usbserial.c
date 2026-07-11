@@ -30,7 +30,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <assert.h>
-#include <nuttx/debug.h>
+#include <debug.h>
 
 #ifdef CONFIG_SERIAL_TERMIOS
 #  include <termios.h>

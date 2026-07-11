@@ -35,7 +35,7 @@
 #include <stdbool.h>
 #include <assert.h>
 #include <errno.h>
-#include <nuttx/debug.h>
+#include <debug.h>
 #include <time.h>
 #include <sys/time.h>
 

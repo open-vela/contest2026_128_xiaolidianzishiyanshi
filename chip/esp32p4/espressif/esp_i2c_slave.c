@@ -35,7 +35,7 @@
 #include <stdbool.h>
 #include <assert.h>
 #include <errno.h>
-#include <nuttx/debug.h>
+#include <debug.h>
 #include <time.h>
 #include <sys/time.h>
 #include <sys/param.h>
@@ -736,7 +736,7 @@ static int esp_i2c_slave_thread(int argc, char **argv)
       (struct esp_i2c_priv_s *)((uintptr_t)strtoul(argv[1], NULL, 16));
   int ret;
 
-  nxsched_usleep(1000);
+  nxsig_usleep(1000);
   while (true)
     {
 #ifdef CONFIG_PM
@@ -749,7 +749,7 @@ static int esp_i2c_slave_thread(int argc, char **argv)
 
       /* Sleeping thread before checking i2c peripheral */
 
-      nxsched_usleep(100);
+      nxsig_usleep(100);
     }
 
   return OK;

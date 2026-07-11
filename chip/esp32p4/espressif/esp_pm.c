@@ -28,7 +28,7 @@
 #include <nuttx/irq.h>
 #include <nuttx/power/pm.h>
 
-#include <nuttx/debug.h>
+#include <debug.h>
 
 #include "include/esp_pm.h"
 #include "espressif/esp_pm.h"

@@ -29,7 +29,7 @@
 
 #include <nuttx/config.h>
 
-#include <nuttx/debug.h>
+#include <debug.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>

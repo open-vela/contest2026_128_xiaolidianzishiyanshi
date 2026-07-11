@@ -27,7 +27,7 @@
 #include <nuttx/config.h>
 
 #include <errno.h>
-#include <nuttx/debug.h>
+#include <debug.h>
 #include <stdio.h>
 
 #include <nuttx/kmalloc.h>

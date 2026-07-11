@@ -38,6 +38,7 @@
 
 #include <nuttx/signal.h>
 #include <nuttx/mutex.h>
+#include <nuttx/kmalloc.h>
 #include <nuttx/lib/lib.h>
 
 #include "esp_rom_caps.h"
@@ -354,6 +355,7 @@ void noreturn_function __assert_func(const char *file, int line,
                                      const char *func, const char *expr)
 {
   __assert(file, line, expr);
+  abort();  // fix compiler warnings
 }
 
 void _cleanup_r(struct _reent *r)

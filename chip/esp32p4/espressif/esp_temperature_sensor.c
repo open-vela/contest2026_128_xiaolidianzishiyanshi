@@ -36,7 +36,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <math.h>
-#include <nuttx/debug.h>
+#include <debug.h>
 
 #include <arch/board/board.h>
 #include <nuttx/irq.h>
@@ -680,7 +680,7 @@ static int esp_temperature_sensor_thread(int argc, char **argv)
 
       /* Sleeping thread before fetching the next sensor data */
 
-      nxsched_usleep(priv->interval);
+      nxsig_usleep(priv->interval);
     }
 
   return OK;

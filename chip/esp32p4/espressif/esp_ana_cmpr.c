@@ -25,7 +25,7 @@
 #include <nuttx/config.h>
 
 #include <nuttx/analog/comp.h>
-#include <nuttx/debug.h>
+#include <debug.h>
 
 #include "espressif/esp_ana_cmpr.h"
 
