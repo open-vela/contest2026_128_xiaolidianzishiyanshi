@@ -24,7 +24,7 @@
 # Bootloader Configuration Variables
 # ##############################################################################
 
-set(TOOLSDIR ${NUTTX_DIR}/tools/espressif)
+set(TOOLSDIR ${CMAKE_CURRENT_SOURCE_DIR}/tools/espressif)
 # Use ESPRESSIF_COMMON_DIR instead of CMAKE_CURRENT_SOURCE_DIR
 set(BOOTLOADER_SRCDIR ${ESPRESSIF_COMMON_DIR}/bootloader)
 set(BOOTLOADER_OUTDIR ${BOOTLOADER_SRCDIR}/out)

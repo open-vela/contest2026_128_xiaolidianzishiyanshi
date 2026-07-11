@@ -437,8 +437,9 @@ add_custom_command(
   POST_BUILD
   COMMAND
     ${CMAKE_COMMAND} -DBINARY_DIR=${CMAKE_BINARY_DIR}
+    -DTOOLS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tools/espressif
     -DSOURCE_DIR=${CMAKE_SOURCE_DIR} -P
-    ${NUTTX_DIR}/tools/espressif/espressif_mkimage.cmake
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/espressif/espressif_mkimage.cmake
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   COMMENT "Generating ESP-compatible binary"
   VERBATIM)
@@ -449,7 +450,7 @@ add_custom_command(
 # idea as make NOCHECK.)
 
 if(CONFIG_ESPRESSIF_SECURE_FLASH_ENC_ENABLED)
-  include(${NUTTX_DIR}/tools/espressif/espressif_burn_enc_key.cmake)
+  include(${CMAKE_CURRENT_SOURCE_DIR}/tools/espressif/espressif_burn_enc_key.cmake)
 endif()
 
 # ##############################################################################
@@ -462,8 +463,9 @@ add_custom_target(
   DEPENDS nuttx_post_build
   COMMAND
     ${CMAKE_COMMAND} -DBINARY_DIR=${CMAKE_BINARY_DIR}
+    -DTOOLS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tools/espressif
     -DSOURCE_DIR=${CMAKE_SOURCE_DIR} -DNUTTX_DIR=${NUTTX_DIR} -P
-    ${NUTTX_DIR}/tools/espressif/espressif_flash.cmake
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/espressif/espressif_flash.cmake
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   COMMENT "Flashing firmware via esptool to $ENV{ESPTOOL_PORT}"
   VERBATIM)
