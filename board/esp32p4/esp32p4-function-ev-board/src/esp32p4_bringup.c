@@ -164,6 +164,7 @@ int esp_bringup(void)
 {
   int ret = OK;
 
+  printf("Mount procfs at /proc: %d\n", ret);
 #ifdef CONFIG_FS_PROCFS
   /* Mount the procfs file system */
 
@@ -172,6 +173,8 @@ int esp_bringup(void)
     {
       _err("Failed to mount procfs at /proc: %d\n", ret);
     }
+  _err("Mount procfs at /proc: %d\n", ret);
+  printf("Mount procfs at /proc: %d\n", ret);
 #endif
 
 #ifdef CONFIG_FS_TMPFS
