@@ -433,25 +433,6 @@ static void IRAM_ATTR NOINLINE_ATTR recalib_bbpll(void)
 extern void esp_chip_revision_check(void);
 
 /****************************************************************************
- * Name: riscv_soc_initialize
- *
- * Description:
- *   Initialize SoC-specific initialization.
- *
- * Input Parameters:
- *   None
- *
- * Returned Value:
- *   None
- *
- ****************************************************************************/
-
-void weak_function riscv_soc_initialize(void)
-{
-  sys_startup_fn();
-}
-
-/****************************************************************************
  * Name: sys_startup_fn
  *
  * Description:

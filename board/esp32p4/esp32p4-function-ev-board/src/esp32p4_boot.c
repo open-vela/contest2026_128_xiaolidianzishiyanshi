@@ -27,6 +27,7 @@
 #include <nuttx/config.h>
 
 #include "esp32p4-function-ev-board.h"
+#include "espressif/esp_start.h"
 
 /****************************************************************************
  * Pre-processor Definitions
@@ -60,6 +61,38 @@
 void esp_board_initialize(void)
 {
 }
+
+/****************************************************************************
+ * Name: board_early_initialize
+ *
+ * Description:
+ *   If CONFIG_BOARD_EARLY_INITIALIZE is selected, then an additional
+ *   initialization call will be performed in the boot-up sequence to a
+ *   function called board_early_initialize().  board_early_initialize()
+ *   will be called immediately after up_initialize() and well before
+ *   board_early_initialize() is called and the initial application is
+ *   started.  The context in which board_early_initialize() executes is
+ *   suitable for early initialization of most, simple device drivers and
+ *   is a logical, board-specific extension of up_initialize().
+ *
+ *   board_early_initialize() runs on the startup, initialization thread.
+ *   Some initialization operations cannot be performed on the start-up,
+ *   initialization thread.  That is because the initialization thread
+ *   cannot wait for event.  Waiting may be required, for example, to
+ *   mount a file system or or initialize a device such as an SD card.
+ *   For this reason, such driver initialize must be deferred to
+ *   board_late_initialize().
+
+ ****************************************************************************/
+
+#ifdef CONFIG_BOARD_EARLY_INITIALIZE
+void board_early_initialize(void)
+{
+  /* Perform board-specific initialization */
+
+  sys_startup_fn();
+}
+#endif
 
 /****************************************************************************
  * Name: board_late_initialize
