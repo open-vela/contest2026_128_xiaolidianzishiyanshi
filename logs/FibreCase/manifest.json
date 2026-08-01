@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "team_id": "contest2026_128_xiaolidianzishiyanshi",
+  "github_login": "FibreCase",
+  "generator": "claude-code-collector@1.2.0",
+  "sessions": [
+    {
+      "session_id": "14ce51df-6c02-461a-af3d-7ca6ec83d873",
+      "tool": "claude-code",
+      "started_at": "2026-07-15T05:22:48.747Z",
+      "last_event_at": "2026-07-15T05:22:48.747Z",
+      "event_count": 16,
+      "raw_event_count": 28,
+      "file_path": "logs/FibreCase/2026-07-15/claude-code__14ce51df-6c02-461a-af3d-7ca6ec83d873.jsonl",
+      "collection_mode": "cli",
+      "health": "ok",
+      "model": "mimo-v2.5-pro"
+    },
+    {
+      "session_id": "51bee50c-09e3-4d3e-a35c-3dc11a5c5248",
+      "tool": "claude-code",
+      "started_at": "2026-07-28T07:32:43.680Z",
+      "last_event_at": "2026-07-28T09:39:13.087Z",
+      "event_count": 16,
+      "raw_event_count": 38,
+      "file_path": "logs/FibreCase/2026-07-28/claude-code__51bee50c-09e3-4d3e-a35c-3dc11a5c5248.jsonl",
+      "collection_mode": "cli",
+      "health": "ok",
+      "model": "mimo-v2.5-pro"
+    }
+  ],
+  "updated_at": "2026-07-28T09:39:13.095Z"
+}
