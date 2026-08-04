@@ -554,6 +554,16 @@ if(CONFIG_ESPRESSIF_IDF_ENV_FPGA)
                       esp_common_include_fpga_overrides_rng)
 endif()
 
+if(CONFIG_ESPRESSIF_MIPI_DSI)
+  list(
+    APPEND
+    HAL_SRCS
+    ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_lcd/mipi_dsi_hal.c
+    ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_lcd/${CHIP_SERIES}/mipi_dsi_periph.c
+    ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_dma/dw_gdma_hal.c
+    ${ESP_HAL_3RDPARTY_REPO}/components/upper_hal_dma/src/dw_gdma.c)
+endif()
+
 target_sources(arch PRIVATE ${HAL_SRCS})
 
 # ##############################################################################

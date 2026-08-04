@@ -56,6 +56,16 @@ config ESP32P4_SELECTS_REV_LESS_V3
 		have huge hardware difference.
 		Revisions higher than 3.0 (included) is not compatible with 0.x and 1.x.
 
+config ESPRESSIF_MIPI_DSI
+	bool "ESP32-P4 MIPI-DSI framebuffer"
+	depends on ARCH_CHIP_ESP32P4 && VIDEO_FB && MIPI_DSI
+	depends on ESPRESSIF_SPIRAM
+	select FB_UPDATE
+	help
+		Enable the ESP32-P4 MIPI-DSI host, DPI bridge and DW-GDMA
+		framebuffer lower half.  The first supported panel is the EK79007
+		on the ESP32-P4 Function EV Board.
+
 choice ESP32P4_REV_MIN
 	prompt "Minimum Supported ESP32-P4 Revision"
 	default ESP32P4_REV_MIN_301

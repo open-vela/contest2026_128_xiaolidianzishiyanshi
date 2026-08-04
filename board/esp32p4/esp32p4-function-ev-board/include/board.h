@@ -38,4 +38,9 @@
 
 #define BUTTON_BOOT  35
 
+/* Official 1024x600 EK79007 MIPI-DSI display adapter. */
+
+#define BOARD_LCD_BACKLIGHT  26
+#define BOARD_LCD_RST        27
+
 #endif /* __BOARDS_RISCV_ESP32P4_ESP32P4_FUNCTION_EV_BOARD_INCLUDE_BOARD_H */

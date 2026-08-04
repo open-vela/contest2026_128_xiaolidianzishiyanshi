@@ -36,6 +36,11 @@
 
 #include <nuttx/fs/fs.h>
 
+#ifdef CONFIG_ESPRESSIF_MIPI_DSI
+#  include <nuttx/kthread.h>
+#  include <nuttx/video/fb.h>
+#endif
+
 #include "esp_board_ledc.h"
 #include "esp_board_spiflash.h"
 #include "esp_board_i2c.h"
@@ -150,6 +155,34 @@
  ****************************************************************************/
 
 /****************************************************************************
+ * Private Functions
+ ****************************************************************************/
+
+#ifdef CONFIG_ESPRESSIF_MIPI_DSI
+static int esp_fb_init_thread(int argc, char *argv[])
+{
+  int ret;
+
+  (void)argc;
+  (void)argv;
+
+  syslog(LOG_INFO, "MIPI: framebuffer initialization started\n");
+  ret = fb_register(0, 0);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ERROR: Failed to register MIPI framebuffer: %d\n",
+             ret);
+    }
+  else
+    {
+      syslog(LOG_INFO, "MIPI: /dev/fb0 registered\n");
+    }
+
+  return ret;
+}
+#endif
+
+/****************************************************************************
  * Public Functions
  ****************************************************************************/
 
@@ -171,6 +204,20 @@
 int esp_bringup(void)
 {
   int ret = OK;
+#ifdef CONFIG_ESPRESSIF_MIPI_DSI
+  int fbret;
+#endif
+
+#ifdef CONFIG_ESPRESSIF_MIPI_DSI
+  syslog(LOG_INFO, "MIPI: starting framebuffer task\n");
+  fbret = kthread_create("mipi_fb", SCHED_PRIORITY_DEFAULT, 4096,
+                         esp_fb_init_thread, NULL);
+  if (fbret < 0)
+    {
+      syslog(LOG_ERR, "ERROR: Failed to start MIPI framebuffer task: %d\n",
+             fbret);
+    }
+#endif
 
   printf("Mount procfs at /proc: %d\n", ret);
 #ifdef CONFIG_FS_PROCFS
