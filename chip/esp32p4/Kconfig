@@ -44,6 +44,7 @@ config ARCH_CHIP_ESP32P4
 
 
 source "../vendor/espressif/chips/esp32p4/espressif/Kconfig"
+source "../vendor/espressif/chips/esp32p4/espressif/esp_hosted/Kconfig"
 
 
 config ESP32P4_SELECTS_REV_LESS_V3

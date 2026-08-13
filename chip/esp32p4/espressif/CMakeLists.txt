@@ -418,6 +418,14 @@ if(CONFIG_ESPRESSIF_WIRELESS)
 endif()
 
 # ##############################################################################
+# Include ESP-Hosted configuration (if enabled)
+# ##############################################################################
+
+if(CONFIG_ESP_HOSTED)
+  include(${CMAKE_CURRENT_SOURCE_DIR}/esp_hosted/CMakeLists.txt)
+endif()
+
+# ##############################################################################
 # Add sources to arch target
 # ##############################################################################
 

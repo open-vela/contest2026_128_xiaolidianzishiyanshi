@@ -1,0 +1,197 @@
+#
+# For a description of the syntax of this configuration file,
+# see the file kconfig-language.txt in the NuttX tools repository.
+#
+
+menuconfig ESP_HOSTED
+	bool "ESP-Hosted Wi-Fi Co-processor Support"
+	default n
+	depends on ARCH_CHIP_ESP32P4
+	---help---
+		Enable ESP-Hosted to use an ESP32-C6 (or other ESP chip) as a
+		Wi-Fi/Bluetooth co-processor over SPI, SDIO, or UART transport.
+
+if ESP_HOSTED
+
+choice ESP_HOSTED_TRANSPORT
+	prompt "Transport interface"
+	default ESP_HOSTED_SDIO
+	---help---
+		Select the transport bus between ESP32-P4 (Host) and ESP co-processor.
+
+	config ESP_HOSTED_SDIO
+		bool "SDIO"
+		---help---
+			SDIO 4-bit mode. Highest performance (~80 Mbps UDP).
+
+	config ESP_HOSTED_SPI
+		bool "SPI Full-duplex"
+		depends on ESPRESSIF_SPI
+		---help---
+			Standard SPI full-duplex. Good balance of simplicity and throughput.
+
+	config ESP_HOSTED_UART
+		bool "UART"
+		---help---
+			UART transport. Simplest, lowest throughput (~0.7 Mbps).
+
+endchoice
+
+# ---- SPI 配置 ----
+if ESP_HOSTED_SPI
+
+config ESP_HOSTED_SPI_BUS
+	int "SPI bus number"
+	default 1
+	---help---
+		Which SPI bus to use (0 or 1 on ESP32-P4).
+
+config ESP_HOSTED_SPI_FREQ_MHZ
+	int "SPI clock frequency (MHz)"
+	default 10
+	range 1 40
+	---help---
+		SPI clock frequency. Start low (10 MHz) for debugging.
+
+config ESP_HOSTED_SPI_GPIO_CS
+	int "SPI CS GPIO"
+	default 7
+	---help---
+		GPIO pin for SPI chip select.
+
+config ESP_HOSTED_SPI_GPIO_HANDSHAKE
+	int "Handshake GPIO"
+	default 6
+	---help---
+		GPIO for host->slave handshake signal.
+
+config ESP_HOSTED_SPI_GPIO_DATA_READY
+	int "Data Ready GPIO"
+	default 11
+	---help---
+		GPIO for slave->host data ready interrupt.
+
+endif # ESP_HOSTED_SPI
+
+# ---- SDIO 配置 ----
+if ESP_HOSTED_SDIO
+
+config ESP_HOSTED_SDIO_SLOT
+	int "SDIO slot"
+	default 1
+	---help---
+		SDIO slot to use. Slot 1 connects to on-board ESP32-C6
+		on ESP32-P4-Function-EV-Board.
+
+config ESP_HOSTED_SDIO_FREQ_KHZ
+	int "SDIO clock frequency (kHz)"
+	default 40000
+	range 400 50000
+	---help---
+		SDIO clock frequency.
+
+config ESP_HOSTED_SDIO_BUS_WIDTH_4BIT
+	bool "Use 4-bit SDIO bus"
+	default y
+	---help---
+		Use 4-bit bus width for higher throughput.
+
+endif # ESP_HOSTED_SDIO
+
+# ---- UART 配置 ----
+if ESP_HOSTED_UART
+
+config ESP_HOSTED_UART_PORT
+	int "UART port number"
+	default 1
+	---help---
+		Which UART port to use for ESP-Hosted communication.
+
+config ESP_HOSTED_UART_BAUDRATE
+	int "UART baud rate"
+	default 921600
+	---help---
+		Baud rate. Higher = more throughput, less reliability.
+
+endif # ESP_HOSTED_UART
+
+# ---- 通用配置 ----
+config ESP_HOSTED_GPIO_RESET_SLAVE
+	int "Slave reset GPIO"
+	default 54
+	---help---
+		GPIO connected to the ESP co-processor RST/EN pin.
+
+config ESP_HOSTED_USE_MEMPOOL
+	bool "Use mempool for transport buffers"
+	default y
+	---help---
+		Use memory pool for buffer allocation instead of malloc.
+
+config ESP_HOSTED_TASK_STACK_SIZE
+	int "ESP-Hosted task stack size"
+	default 4096
+	---help---
+		Stack size for the ESP-Hosted RPC task.
+
+config ESP_HOSTED_TASK_PRIORITY
+	int "ESP-Hosted task priority"
+	default 100
+	---help---
+		Priority for the ESP-Hosted tasks.
+
+config ESP_HOSTED_MAX_SYNC_RPC_REQUESTS
+	int "Max simultaneous sync RPC requests"
+	default 5
+	---help---
+		Maximum number of simultaneous synchronous RPC requests.
+
+config ESP_HOSTED_MAX_ASYNC_RPC_REQUESTS
+	int "Max simultaneous async RPC requests"
+	default 5
+	---help---
+		Maximum number of simultaneous asynchronous RPC requests.
+
+config ESP_HOSTED_SPI_TX_Q_SIZE
+	int "SPI TX queue size"
+	default 10
+	depends on ESP_HOSTED_SPI
+	---help---
+		SPI transport TX queue size.
+
+config ESP_HOSTED_SPI_RX_Q_SIZE
+	int "SPI RX queue size"
+	default 10
+	depends on ESP_HOSTED_SPI
+	---help---
+		SPI transport RX queue size.
+
+config ESP_HOSTED_SDIO_TX_Q_SIZE
+	int "SDIO TX queue size"
+	default 10
+	depends on ESP_HOSTED_SDIO
+	---help---
+		SDIO transport TX queue size.
+
+config ESP_HOSTED_SDIO_RX_Q_SIZE
+	int "SDIO RX queue size"
+	default 10
+	depends on ESP_HOSTED_SDIO
+	---help---
+		SDIO transport RX queue size.
+
+config ESP_HOSTED_UART_TX_Q_SIZE
+	int "UART TX queue size"
+	default 10
+	depends on ESP_HOSTED_UART
+	---help---
+		UART transport TX queue size.
+
+config ESP_HOSTED_UART_RX_Q_SIZE
+	int "UART RX queue size"
+	default 10
+	depends on ESP_HOSTED_UART
+	---help---
+		UART transport RX queue size.
+
+endif # ESP_HOSTED
