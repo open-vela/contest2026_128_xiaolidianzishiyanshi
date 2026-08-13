@@ -66,6 +66,29 @@
 #define SD_IO_CCCR_BLKSIZEL     0x10
 #define SD_IO_CCCR_BLKSIZEH     0x11
 
+/* SDIO wrapper macros for NuttX SDIO interface */
+
+#define SDIO_WRITEFUNC(dev, func, addr, data, len) \
+    sdio_io_rw_extended((dev), true, (func), (addr), true, (data), (len), 1)
+
+#define SDIO_READFUNC(dev, func, addr, data, len) \
+    sdio_io_rw_extended((dev), false, (func), (addr), true, (data), (len), 1)
+
+#define SDIO_READBLOCK(dev, reg, data, blocks) \
+    sdio_io_rw_extended((dev), false, SDIO_FUNC_1, (reg), true, (data), SDIO_BLOCK_SIZE, (blocks))
+
+#define SDIO_WRITEBLOCK(dev, reg, data, blocks) \
+    sdio_io_rw_extended((dev), true, SDIO_FUNC_1, (reg), true, (data), SDIO_BLOCK_SIZE, (blocks))
+
+#define SDIO_SETFREQUENCY(dev, freq) \
+    ((dev)->clock((dev), CLOCK_SD_TRANSFER_4BIT))
+
+#define SDIO_SETBUSWIDTH(dev, width) \
+    sdio_set_wide_bus(dev)
+
+#define SDIO_WAITINT(dev, ticks) \
+    ((dev)->eventwait(dev))
+
 /****************************************************************************
  * Private Types
  ****************************************************************************/
@@ -165,7 +188,7 @@ static int hosted_sdio_card_fn_init(struct sdio_dev_s *dev)
             return ret;
         }
 
-        wldebug("IOR: 0x%02x\n", ior);
+        wlinfo("IOR: 0x%02x\n", ior);
         if (ior & (1 << 1)) {
             break;
         }
@@ -185,7 +208,7 @@ static int hosted_sdio_card_fn_init(struct sdio_dev_s *dev)
         return ret;
     }
 
-    wldebug("IE: 0x%02x\n", ie);
+    wlinfo("IE: 0x%02x\n", ie);
 
     ie |= (1 << 0) | (1 << 1);  /* Master enable + FUNC1 */
     ret = SDIO_WRITEFUNC(dev, SDIO_FUNC_0, SD_IO_CCCR_INT_ENABLE, &ie, 1);
@@ -234,11 +257,7 @@ int hosted_sdio_card_init(void *ctx, bool show_config)
 
     /* Initialize SDIO bus */
 
-    ret = SDIO_SETFREQUENCY(dev, context->clock_freq_khz * 1000);
-    if (ret < 0) {
-        wlerr("ERROR: Failed to set SDIO frequency: %d\n", ret);
-        return ret;
-    }
+    SDIO_SETFREQUENCY(dev, context->clock_freq_khz * 1000);
 
     if (context->bus_width == 4) {
         ret = SDIO_SETBUSWIDTH(dev, 4);

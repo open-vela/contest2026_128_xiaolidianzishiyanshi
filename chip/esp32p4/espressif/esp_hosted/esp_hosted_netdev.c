@@ -39,9 +39,11 @@
 #include <nuttx/spinlock.h>
 
 #include "esp_hosted_port.h"
+#include "esp_hosted_interface.h"
 #include "esp_hosted_netdev.h"
 #include "esp_hosted.h"
 #include "esp_hosted_api_types.h"
+#include "transport_drv.h"
 
 /****************************************************************************
  * Pre-processor Definitions
@@ -239,7 +241,8 @@ static int hosted_transmit(struct netdev_lowerhalf_s *dev, netpkt_t *pkt)
 
   /* Send via ESP-Hosted */
 
-  ret = esp_hosted_tx(priv->flatbuf, len);
+  ret = esp_hosted_tx(ESP_STA_IF, 0, priv->flatbuf, len,
+                      H_BUFF_NO_ZEROCOPY, priv->flatbuf, NULL, 0);
   if (ret < 0) {
     wlerr("ERROR: Failed to transmit packet: %d\n", ret);
     return ret;
@@ -503,7 +506,7 @@ int esp_hosted_netdev_rx_notify(uint8_t *data, uint16_t len)
   /* Add to RX queue */
 
   flags = spin_lock_irqsave(&priv->rx_lock);
-  netpkt_add_queue(&priv->netdev_rx_queue, pkt);
+  netpkt_tryadd_queue(pkt, &priv->netdev_rx_queue);
   spin_unlock_irqrestore(&priv->rx_lock, flags);
 
   /* Notify upper half */

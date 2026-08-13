@@ -18,14 +18,17 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include <transport_drv.h>
+
 /****************************************************************************
  * Pre-processor Definitions
  ****************************************************************************/
 
 #define ESP_BLOCK_SIZE  512
 
-#define MAX_SDIO_BUFFER_SIZE  (ESP_BLOCK_SIZE * 4)
+#ifndef MAX_TRANSPORT_BUFFER_SIZE
 #define MAX_TRANSPORT_BUFFER_SIZE  MAX_SDIO_BUFFER_SIZE
+#endif
 
 #define ESP_HOSTED_SDIO_UNRESPONSIVE_CODE  0x107
 

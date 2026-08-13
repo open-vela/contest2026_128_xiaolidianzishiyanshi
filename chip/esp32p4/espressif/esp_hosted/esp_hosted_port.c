@@ -39,6 +39,7 @@
 #include <time.h>
 #include <syslog.h>
 
+#include <nuttx/board.h>
 #include <nuttx/clock.h>
 #include <nuttx/kmalloc.h>
 #include <nuttx/mutex.h>
