@@ -586,6 +586,8 @@ SECTIONS
      * startup. The corresponding code can be found in startup.c.
      */
 
+  _sinit = ABSOLUTE(.);
+
  . = ALIGN(4);
  __init_priority_array_start = ABSOLUTE(.);
     KEEP (*(EXCLUDE_FILE (*crtend.* *crtbegin.*) .init_array.*))
@@ -596,6 +598,8 @@ SECTIONS
     KEEP (*(EXCLUDE_FILE (*crtend.* *crtbegin.*) .init_array))
     __init_array_end = ABSOLUTE(.);
     /* Addresses of memory regions reserved via SOC_RESERVE_MEMORY_REGION() */
+
+  _einit = ABSOLUTE(.);
 
  . = ALIGN(4);
  soc_reserved_memory_region_start = ABSOLUTE(.);
