@@ -75,6 +75,20 @@ CONFIG_ESP_HOSTED_MAX_SYNC_RPC_REQUESTS=5
 CONFIG_ESP_HOSTED_MAX_ASYNC_RPC_REQUESTS=5
 
 # ##############################################################################
+# ESP32P4 SDMMC Host Controller
+# ##############################################################################
+
+CONFIG_ESP32P4_SDMMC=y
+# CONFIG_ESP32P4_SDMMC_SLOT0 is not set
+CONFIG_ESP32P4_SDMMC_SLOT1=y
+CONFIG_ESP32P4_SDMMC_SLOT1_PIN_CLK=14
+CONFIG_ESP32P4_SDMMC_SLOT1_PIN_CMD=15
+CONFIG_ESP32P4_SDMMC_SLOT1_PIN_D0=16
+CONFIG_ESP32P4_SDMMC_SLOT1_PIN_D1=17
+CONFIG_ESP32P4_SDMMC_SLOT1_PIN_D2=18
+CONFIG_ESP32P4_SDMMC_SLOT1_PIN_D3=19
+
+# ##############################################################################
 # Network Support
 # ##############################################################################
 
