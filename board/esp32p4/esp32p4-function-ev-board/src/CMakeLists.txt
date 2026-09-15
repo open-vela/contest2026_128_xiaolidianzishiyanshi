@@ -41,6 +41,10 @@ if(CONFIG_ESPRESSIF_EMAC)
   list(APPEND SRCS esp32p4_ethernet.c)
 endif()
 
+if(CONFIG_ESP32P4_SDMMC)
+  list(APPEND SRCS esp32p4_board_sdmmc.c)
+endif()
+
 target_sources(board PRIVATE ${SRCS})
 
 # ##############################################################################
