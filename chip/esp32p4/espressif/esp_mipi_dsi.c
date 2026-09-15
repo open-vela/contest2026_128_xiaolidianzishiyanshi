@@ -41,8 +41,9 @@
 #include "esp_attr.h"
 #include "esp_cache.h"
 #include "esp_clk_tree.h"
-#include "esp_private/dw_gdma.h"
 #include "hal/clk_gate_ll.h"
+#include "hal/dw_gdma_hal.h"
+#include "hal/dw_gdma_ll.h"
 #include "hal/ldo_ll.h"
 #include "hal/mipi_dsi_brg_ll.h"
 #include "hal/mipi_dsi_hal.h"
@@ -62,6 +63,7 @@
 #define DSI_LANE_RATE_MBPS      650
 #define DSI_PHY_REF_HZ          40000000
 #define DSI_POLL_LOOPS          100000
+#define DSI_DMA_CHANNEL         0
 
 #define LCD_WIDTH               1024
 #define LCD_HEIGHT              600
@@ -93,9 +95,8 @@ struct esp_dsi_s
   struct mipi_dsi_host host;
   struct mipi_dsi_device *panel;
   mipi_dsi_hal_context_t hal;
+  dw_gdma_hal_context_t dma;
   mutex_t lock;
-  dw_gdma_channel_handle_t dma;
-  dw_gdma_link_list_handle_t link;
   bool initialized;
 };
 
@@ -503,12 +504,7 @@ static int esp_dsi_read_dcs_cmd(struct esp_dsi_s *priv, uint8_t cmd,
 
 static int esp_dsi_dma_submit(struct esp_dsi_s *priv)
 {
-  dw_gdma_block_markers_t markers =
-    {
-      .is_valid = true,
-      .is_last = true
-    };
-
+  dw_gdma_dev_t *dma = priv->dma.dev;
   int ret;
 
   ret = nxmutex_lock(&priv->lock);
@@ -523,15 +519,37 @@ static int esp_dsi_dma_submit(struct esp_dsi_s *priv)
    * the system when called on the display channel after frame completion.
    */
 
-  dw_gdma_channel_enable_ctrl(priv->dma, false);
+  dw_gdma_ll_channel_enable(dma, DSI_DMA_CHANNEL, false);
+  dw_gdma_ll_channel_set_src_addr(dma, DSI_DMA_CHANNEL,
+                                   (uint32_t)g_framebuffer);
+  dw_gdma_ll_channel_set_dst_addr(dma, DSI_DMA_CHANNEL,
+                                   MIPI_DSI_BRG_MEM_BASE);
+  dw_gdma_ll_channel_set_trans_block_size(dma, DSI_DMA_CHANNEL,
+                                           LCD_FB_SIZE / 8);
+  dw_gdma_ll_channel_set_src_master_port(dma, DSI_DMA_CHANNEL,
+                                          (uint32_t)g_framebuffer);
+  dw_gdma_ll_channel_set_dst_master_port(dma, DSI_DMA_CHANNEL,
+                                          MIPI_DSI_BRG_MEM_BASE);
+  dw_gdma_ll_channel_set_src_trans_width(dma, DSI_DMA_CHANNEL,
+                                          DW_GDMA_TRANS_WIDTH_64);
+  dw_gdma_ll_channel_set_dst_trans_width(dma, DSI_DMA_CHANNEL,
+                                          DW_GDMA_TRANS_WIDTH_64);
+  dw_gdma_ll_channel_set_src_burst_items(dma, DSI_DMA_CHANNEL,
+                                          DW_GDMA_BURST_ITEMS_16);
+  dw_gdma_ll_channel_set_dst_burst_items(dma, DSI_DMA_CHANNEL,
+                                          DW_GDMA_BURST_ITEMS_16);
+  dw_gdma_ll_channel_set_src_burst_mode(dma, DSI_DMA_CHANNEL,
+                                         DW_GDMA_BURST_MODE_INCREMENT);
+  dw_gdma_ll_channel_set_dst_burst_mode(dma, DSI_DMA_CHANNEL,
+                                         DW_GDMA_BURST_MODE_FIXED);
+  dw_gdma_ll_channel_set_src_burst_len(dma, DSI_DMA_CHANNEL, 16);
+  dw_gdma_ll_channel_set_dst_burst_len(dma, DSI_DMA_CHANNEL, 16);
+  dw_gdma_ll_channel_enable_src_periph_status_write_back(
+    dma, DSI_DMA_CHANNEL, false);
+  dw_gdma_ll_channel_enable_dst_periph_status_write_back(
+    dma, DSI_DMA_CHANNEL, false);
+  dw_gdma_ll_channel_enable(dma, DSI_DMA_CHANNEL, true);
   ret = OK;
-  dw_gdma_lli_set_block_markers(dw_gdma_link_list_get_item(priv->link, 0),
-                                markers);
-  if (dw_gdma_channel_use_link_list(priv->dma, priv->link) != ESP_OK ||
-      dw_gdma_channel_enable_ctrl(priv->dma, true) != ESP_OK)
-    {
-      ret = -EIO;
-    }
 
   nxmutex_unlock(&priv->lock);
   return ret;
@@ -539,71 +557,42 @@ static int esp_dsi_dma_submit(struct esp_dsi_s *priv)
 
 static int esp_dsi_dma_initialize(struct esp_dsi_s *priv)
 {
-  dw_gdma_channel_alloc_config_t chan_cfg =
-    {
-      .src =
-        {
-          DW_GDMA_BLOCK_TRANSFER_LIST, DW_GDMA_ROLE_MEM,
-          DW_GDMA_HANDSHAKE_HW, 5, 0
-        },
+  dw_gdma_dev_t *dma;
+  irqstate_t flags;
 
-      .dst =
-        {
-          DW_GDMA_BLOCK_TRANSFER_LIST, DW_GDMA_ROLE_PERIPH_DSI,
-          DW_GDMA_HANDSHAKE_HW, 2, 0
-        },
+  /* The MIPI configuration owns channel 0 of the display/CSI DW-GDMA.
+   * Configure the controller directly so the NuttX driver does not depend
+   * on the OS-specific ESP-IDF upper-HAL wrapper.
+   */
 
-      .flow_controller = DW_GDMA_FLOW_CTRL_SELF,
+  flags = up_irq_save();
+  (dw_gdma_ll_enable_bus_clock)(0, true);
+  _dw_gdma_ll_reset_register(0);
+  up_irq_restore(flags);
 
-      /* Keep display traffic below latency-sensitive CPU/UART traffic. */
-
-      .chan_priority = 0
-    };
-
-  dw_gdma_link_list_config_t list_cfg =
-    {
-      .num_items = 1,
-      .link_type = DW_GDMA_LINKED_LIST_TYPE_SINGLY
-    };
-
-  dw_gdma_block_transfer_config_t transfer =
-    {
-      .src =
-        {
-          (uint32_t)g_framebuffer, DW_GDMA_TRANS_WIDTH_64,
-          DW_GDMA_BURST_MODE_INCREMENT, DW_GDMA_BURST_ITEMS_16, 16
-        },
-
-      .dst =
-        {
-          MIPI_DSI_BRG_MEM_BASE, DW_GDMA_TRANS_WIDTH_64,
-          DW_GDMA_BURST_MODE_FIXED, DW_GDMA_BURST_ITEMS_16, 16
-        },
-
-      .size = LCD_FB_SIZE / 8
-    };
-
-  dw_gdma_block_markers_t markers =
-    {
-      .is_valid = true,
-      .is_last = true
-    };
-
-  dw_gdma_lli_handle_t item;
-
-  if (dw_gdma_new_channel(&chan_cfg, &priv->dma) != ESP_OK ||
-      dw_gdma_new_link_list(&list_cfg, &priv->link) != ESP_OK)
-    {
-      return -ENOMEM;
-    }
-
-  item = dw_gdma_link_list_get_item(priv->link, 0);
-  if (dw_gdma_lli_config_transfer(item, &transfer) != ESP_OK ||
-      dw_gdma_lli_set_block_markers(item, markers) != ESP_OK ||
-      dw_gdma_channel_use_link_list(priv->dma, priv->link) != ESP_OK)
-    {
-      return -EIO;
-    }
+  dw_gdma_hal_init(&priv->dma, NULL);
+  dma = priv->dma.dev;
+  dw_gdma_ll_channel_set_trans_flow(dma, DSI_DMA_CHANNEL,
+                                     DW_GDMA_ROLE_MEM,
+                                     DW_GDMA_ROLE_PERIPH_DSI,
+                                     DW_GDMA_FLOW_CTRL_SELF);
+  dw_gdma_ll_channel_set_src_multi_block_type(
+    dma, DSI_DMA_CHANNEL, DW_GDMA_BLOCK_TRANSFER_CONTIGUOUS);
+  dw_gdma_ll_channel_set_dst_multi_block_type(
+    dma, DSI_DMA_CHANNEL, DW_GDMA_BLOCK_TRANSFER_CONTIGUOUS);
+  dw_gdma_ll_channel_set_src_handshake_interface(
+    dma, DSI_DMA_CHANNEL, DW_GDMA_HANDSHAKE_HW);
+  dw_gdma_ll_channel_set_dst_handshake_interface(
+    dma, DSI_DMA_CHANNEL, DW_GDMA_HANDSHAKE_HW);
+  dw_gdma_ll_channel_set_dst_handshake_periph(
+    dma, DSI_DMA_CHANNEL, DW_GDMA_ROLE_PERIPH_DSI);
+  dw_gdma_ll_channel_set_priority(dma, DSI_DMA_CHANNEL, 0);
+  dw_gdma_ll_channel_set_src_outstanding_limit(dma, DSI_DMA_CHANNEL, 5);
+  dw_gdma_ll_channel_set_dst_outstanding_limit(dma, DSI_DMA_CHANNEL, 2);
+  dw_gdma_ll_channel_set_src_periph_status_addr(dma, DSI_DMA_CHANNEL, 0);
+  dw_gdma_ll_channel_set_dst_periph_status_addr(dma, DSI_DMA_CHANNEL, 0);
+  dw_gdma_ll_channel_enable_intr_generation(dma, DSI_DMA_CHANNEL,
+                                             UINT32_MAX, true);
 
   return OK;
 }

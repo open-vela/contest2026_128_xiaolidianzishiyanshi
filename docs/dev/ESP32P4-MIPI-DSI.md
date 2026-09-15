@@ -338,7 +338,7 @@ NuttX framebuffer 和 PSRAM mapping 基本正常。但显示 DMA 尚未形成稳
 
 恢复 DMA 时应先保持彩条模式验证通过，再严格复制官方
 `mipi_dsi_dma_trans_done_cb()` 的 restart 顺序，并检查 NuttX 的 ESP shared IRQ
-映射和 `portYIELD_FROM_ISR()` 兼容性，不应再用轮询线程反复 stop/restart。
+映射和中断尾部调度，不应再用轮询线程反复 stop/restart。
 
 ## 10. 下一步
 
@@ -523,7 +523,7 @@ Host VPG 竖向彩条已成功铺满 1024×600 屏幕。关键修复点：
     */
    ```
 3. 检查 NuttX 的 ESP shared IRQ 映射，确保 DSI 中断正确注册；
-4. 检查 `portYIELD_FROM_ISR()` 在 ESP32-P4 上的兼容性；
+4. 使用 NuttX 原生接口处理中断尾部调度；
 5. 不再使用轮询线程反复 stop/restart DMA。
 
 **验收标准**：framebuffer 内容通过 DMA 持续送往屏幕。
@@ -538,7 +538,7 @@ Host VPG 竖向彩条已成功铺满 1024×600 屏幕。关键修复点：
 
 1. 检查 DSI 中断优先级是否高于 UART RX 中断；
 2. 检查 ISR 中是否有长时间阻塞操作（如 `dw_gdma_channel_abort()`）；
-3. 检查 `portYIELD_FROM_ISR()` 是否导致调度器长时间占用；
+3. 检查 NuttX 中断尾部调度是否导致调度器长时间占用；
 4. 尝试降低 DSI 中断优先级或使用 bottom-half 处理。
 
 **验收标准**：framebuffer 持续刷新时，UART RX/NSH 输入正常。
