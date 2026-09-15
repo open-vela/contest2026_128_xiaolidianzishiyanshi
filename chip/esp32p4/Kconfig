@@ -183,8 +183,6 @@ config ESPRESSIF_CACHE_L1_CACHE_LINE_SIZE
 
 endmenu # Cache config
 
-endif # ARCH_CHIP_CUSTOM
-
 config P4_REV3_MSPI_CRASH_AFTER_POWER_UP_WORKAROUND
 	bool
 	default y if ESP32P4_REV_MIN_300
@@ -193,3 +191,77 @@ config P4_REV3_MSPI_WORKAROUND_SIZE
 	hex
 	default 0x100 if ESP32P4_REV_MIN_300
 	default 0
+
+menuconfig ESP32P4_SDMMC
+	bool "ESP32P4 SDMMC Host Controller"
+	default n
+	depends on SCHED_WORKQUEUE && SCHED_HPWORK
+	select ARCH_HAVE_SDIO
+	select SDIO_DMA if MMCSD
+	select SDIO_BLOCKSETUP if MMCSD_SDIO
+	select SDIO_MUXBUS if MMCSD_SDIO
+	---help---
+		Enable the ESP32P4 SDMMC host controller driver.  This driver
+		implements the NuttX SDIO interface (struct sdio_dev_s) for the
+		DesignWare MCI IP core found on the ESP32P4.  It supports two
+		slots:  slot 0 uses IOMUX (fixed pins for TF card) and slot 1
+		uses the GPIO matrix (for ESP-Hosted SDIO communication with
+		ESP32-C6 co-processor).
+
+if ESP32P4_SDMMC
+
+config ESP32P4_SDMMC_SLOT0
+	bool "Enable SDMMC Slot 0 (IOMUX)"
+	default y
+	---help---
+		Enable SDMMC slot 0 which uses IOMUX fixed pins.  Typically
+		used for external TF card.
+
+config ESP32P4_SDMMC_SLOT1
+	bool "Enable SDMMC Slot 1 (GPIO Matrix)"
+	default y
+	---help---
+		Enable SDMMC slot 1 which uses GPIO matrix for pin routing.
+		Typically used for ESP-Hosted SDIO communication with
+		ESP32-C6 co-processor.
+
+config ESP32P4_SDMMC_SLOT1_PIN_CLK
+	int "Slot 1 CLK GPIO Pin"
+	default 18
+	---help---
+		GPIO pin number for SDMMC slot 1 clock signal.
+
+config ESP32P4_SDMMC_SLOT1_PIN_CMD
+	int "Slot 1 CMD GPIO Pin"
+	default 19
+	---help---
+		GPIO pin number for SDMMC slot 1 command signal.
+
+config ESP32P4_SDMMC_SLOT1_PIN_D0
+	int "Slot 1 D0 GPIO Pin"
+	default 14
+	---help---
+		GPIO pin number for SDMMC slot 1 data line 0.
+
+config ESP32P4_SDMMC_SLOT1_PIN_D1
+	int "Slot 1 D1 GPIO Pin"
+	default 15
+	---help---
+		GPIO pin number for SDMMC slot 1 data line 1.
+
+config ESP32P4_SDMMC_SLOT1_PIN_D2
+	int "Slot 1 D2 GPIO Pin"
+	default 16
+	---help---
+		GPIO pin number for SDMMC slot 1 data line 2.
+
+config ESP32P4_SDMMC_SLOT1_PIN_D3
+	int "Slot 1 D3 GPIO Pin"
+	default 17
+	---help---
+		GPIO pin number for SDMMC slot 1 data line 3.
+
+endif # ESP32P4_SDMMC
+
+
+endif # ARCH_CHIP_CUSTOM

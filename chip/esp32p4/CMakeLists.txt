@@ -24,6 +24,10 @@ add_subdirectory(espressif espressif)
 
 set(SRCS esp_chip_rev.c)
 
+if (CONFIG_ESP32P4_SDMMC)
+  list(APPEND SRCS ${CMAKE_CURRENT_SOURCE_DIR}/esp32p4_sdmmc.c)
+endif()
+
 target_compile_definitions(arch PRIVATE _RETARGETABLE_LOCKING)
 target_compile_options(arch PRIVATE -Wno-array-bounds -Wno-stringop-overflow)
 

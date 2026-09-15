@@ -482,6 +482,24 @@ list(
   APPEND HAL_SRCS
   ${ESP_HAL_3RDPARTY_REPO}/components/bootloader_support/src/bootloader_mem.c)
 
+# ##############################################################################
+# ESP32P4 SDMMC host controller (for ESP-Hosted SDIO)
+# ##############################################################################
+if(CONFIG_ESP32P4_SDMMC)
+  list(
+    APPEND
+    HAL_SRCS
+    ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_sd/sdmmc_hal.c
+    ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_sd/${CHIP_SERIES}/sdmmc_periph.c
+  )
+  target_include_directories(
+    arch PRIVATE
+    ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_sd/${CHIP_SERIES}/include
+    ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_sd/include
+    ${ESP_HAL_3RDPARTY_REPO}/components/esp_eth/include
+  )
+endif()
+
 if(CONFIG_ESPRESSIF_SIMPLE_BOOT)
   list(
     APPEND
