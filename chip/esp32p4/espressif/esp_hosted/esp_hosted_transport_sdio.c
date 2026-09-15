@@ -36,6 +36,7 @@
 #include <nuttx/sdio.h>
 #include <nuttx/kmalloc.h>
 
+#include "esp32p4_sdmmc.h"
 #include "esp_hosted_port.h"
 #include "esp_hosted_os_abstraction.h"
 #include "esp_hosted_transport_config.h"

@@ -52,7 +52,6 @@ if(NOT IS_DIRECTORY "${ESP_HOSTED_REPO_DIR}")
     GIT_REPOSITORY ${ESP_HOSTED_URL}
     GIT_TAG        ${ESP_HOSTED_VERSION}
     SOURCE_DIR     ${ESP_HOSTED_REPO_DIR}
-    GIT_SUBMODULES "common/protobuf-c"
   )
 
   # Use FetchContent_Populate instead of FetchContent_MakeAvailable to avoid
