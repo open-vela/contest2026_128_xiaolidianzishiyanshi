@@ -17,6 +17,11 @@ PROGNAME += lcd_test
 MAINSRC  += lcd_test_main.c
 endif
 
+ifneq ($(CONFIG_LVX_USE_DEMO_CONTEST2026_128_TOUCH_TEST),)
+PROGNAME += touch_test
+MAINSRC  += touch_test_main.c
+endif
+
 PRIORITY  = SCHED_PRIORITY_DEFAULT
 STACKSIZE = 2048
 MODULE    = y

@@ -12,3 +12,10 @@ if(CONFIG_LVX_USE_DEMO_CONTEST2026_128_LCD_TEST)
     SRCS lcd_test_main.c
     STACKSIZE 2048)
 endif()
+
+if(CONFIG_LVX_USE_DEMO_CONTEST2026_128_TOUCH_TEST)
+  nuttx_add_application(
+    NAME touch_test
+    SRCS touch_test_main.c
+    STACKSIZE 2048)
+endif()

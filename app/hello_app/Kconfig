@@ -16,3 +16,11 @@ config LVX_USE_DEMO_CONTEST2026_128_LCD_TEST
 	---help---
 		Draw RGB565 color bars, a border, and a center cross through the
 		NuttX /dev/lcd0 character-device interface.
+
+config LVX_USE_DEMO_CONTEST2026_128_TOUCH_TEST
+	bool "Contest 2026 team 128 touchscreen input test"
+	default n
+	depends on INPUT_TOUCHSCREEN
+	---help---
+		Open a NuttX touchscreen character device, report its ioctl
+		capabilities, and print touch samples received through poll/read.
