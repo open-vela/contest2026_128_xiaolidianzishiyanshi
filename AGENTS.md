@@ -32,8 +32,11 @@
 - Overlay 与 NuttX 是独立仓库并通过软链接协作；检查状态和差异时分别在对应仓库执行。
 - 工作区已有改动、日志和未跟踪文件默认属于用户，不覆盖、不清理、不回退。
 - 默认使用 CMake 构建；除非构建链明确依赖，否则不要修改 `Make.defs`。
+- 除非用户明确要求，否则不要修改repo manifest相关文件。
+- 除非用户明确要求，否则不要提交代码或暂存代码。
 - 每次调试前重新读取当前 defconfig、`.config`、ELF 和链接结果，不依赖旧会话结论。
 - 未经明确要求不要修改 defconfig；临时配置实验应说明并保留可恢复路径。
+- 直接运行 `cmake`/`cmake --build` 前，必须先执行 `export PATH=/home/lxy/openvela/prebuilts/gcc/linux-x86_64/riscv-none-elf/bin/:$PATH`，确保使用 OpenVela 指定的 RISC-V 工具链，避免误用编译器或触发 `zifencei` 扩展问题；通过 `build.sh` 构建时无需额外设置该环境变量。
 - 增量构建：`cmake --build /home/lxy/openvela/cmake_out/esp32p4-function-ev-board_nsh -j8`
 - 修改 defconfig 后重新配置：`cmake --build /home/lxy/openvela/cmake_out/esp32p4-function-ev-board_nsh --target reconfigure`
 - 可使用串口工具烧录，也可在用户已启动 OpenOCD 时通过 GDB/OpenOCD 下载；烧录和调试必须使用同一次构建生成的 ELF/镜像。
