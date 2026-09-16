@@ -110,11 +110,12 @@ struct ft5x06_dev_s
                                              * FT5x06 data */
   volatile bool valid;                      /* True:  New, valid touch data
                                              * in touchbuf[] */
-#ifdef CONFIG_FT5X06_SINGLEPOINT
+  bool touching;                            /* True: A contact is active */
   uint8_t lastid;                           /* Last reported touch id */
-  uint8_t lastevent;                        /* Last reported event */
   int16_t lastx;                            /* Last reported X position */
   int16_t lasty;                            /* Last reported Y position */
+#ifdef CONFIG_FT5X06_SINGLEPOINT
+  uint8_t lastevent;                        /* Last reported event */
 #endif
   mutex_t devlock;                          /* Manages exclusive access to
                                              * this structure */
@@ -568,6 +569,29 @@ static ssize_t ft5x06_sample(FAR struct ft5x06_dev_s *priv, FAR char *buffer,
 
   if (ntouches < 1)
     {
+      /* FT6336 reports a release as TD_STATUS=0, without a touch point
+       * carrying FT5X06_UP.  Convert that transition into the explicit
+       * TOUCH_UP sample expected by the NuttX input API and LVGL.
+       */
+
+      if (priv->touching)
+        {
+          sample = (FAR struct touch_sample_s *)buffer;
+          point  = sample->point;
+
+          sample->npoints   = 1;
+          memset(point, 0, sizeof(*point));
+          point[0].id       = priv->lastid;
+          point[0].flags    = TOUCH_UP | TOUCH_ID_VALID |
+                              TOUCH_POS_VALID;
+          point[0].x        = priv->lastx;
+          point[0].y        = priv->lasty;
+
+          priv->touching = false;
+          priv->valid = false;
+          return SIZEOF_TOUCH_SAMPLE_S(1);
+        }
+
       priv->valid = false;
       return 0;  /* No touches read. */
     }
@@ -580,6 +604,8 @@ static ssize_t ft5x06_sample(FAR struct ft5x06_dev_s *priv, FAR char *buffer,
   /* Return the number of touches read */
 
   sample->npoints = ntouches;
+
+  memset(point, 0, ntouches * sizeof(*point));
 
   /* Decode and return the touch points */
 
@@ -599,6 +625,23 @@ static ssize_t ft5x06_sample(FAR struct ft5x06_dev_s *priv, FAR char *buffer,
       point[i].h        = 0;
       point[i].w        = 0;
       point[i].pressure = 0;
+
+      if (i == 0)
+        {
+          if ((point[i].flags & (TOUCH_DOWN | TOUCH_MOVE)) != 0)
+            {
+              priv->touching = true;
+              priv->lastid = point[i].id;
+              priv->lastx = point[i].x;
+              priv->lasty = point[i].y;
+            }
+          else if ((point[i].flags & TOUCH_UP) != 0)
+            {
+              /* Some FT5x06 variants provide an explicit UP point. */
+
+              priv->touching = false;
+            }
+        }
     }
 
   priv->valid = false;
