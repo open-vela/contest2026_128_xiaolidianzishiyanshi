@@ -27,6 +27,7 @@
 #include <nuttx/config.h>
 
 #include "esp32p4-pico-wifi.h"
+#include "espressif/esp_start.h"
 
 /****************************************************************************
  * Pre-processor Definitions
@@ -60,6 +61,22 @@
 void esp_board_initialize(void)
 {
 }
+
+/****************************************************************************
+ * Name: board_early_initialize
+ *
+ * Description:
+ *   Run vendor startup hooks required by the custom ESP32-P4 overlay before
+ *   late board bring-up.
+ *
+ ****************************************************************************/
+
+#ifdef CONFIG_BOARD_EARLY_INITIALIZE
+void board_early_initialize(void)
+{
+  sys_startup_fn();
+}
+#endif
 
 /****************************************************************************
  * Name: board_late_initialize
