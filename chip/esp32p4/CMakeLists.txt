@@ -22,7 +22,15 @@
 
 add_subdirectory(espressif espressif)
 
-set(SRCS esp_chip_rev.c)
+set(SRCS esp_chip_rev.c esp_clic.c esp_fpu.c)
+
+if(CONFIG_ESP32P4_SELECTS_REV_LESS_V3)
+  target_link_options(nuttx PRIVATE -Wl,--wrap=riscv_restorefpu)
+endif()
+
+if(CONFIG_ESPRESSIF_MIPI_DSI)
+  list(APPEND SRCS ${CMAKE_CURRENT_SOURCE_DIR}/esp_mipi_dsi.c)
+endif()
 
 if (CONFIG_ESP32P4_SDMMC)
   list(APPEND SRCS ${CMAKE_CURRENT_SOURCE_DIR}/esp32p4_sdmmc.c)

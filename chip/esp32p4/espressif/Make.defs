@@ -35,7 +35,7 @@ CHIP_ASRCS  = esp_vectors.S
 # Required Espressif chip's files (arch/risc-v/src/common/espressif)
 
 CHIP_CSRCS  = esp_allocateheap.c esp_start.c esp_idle.c
-CHIP_CSRCS += esp_irq.c esp_clic.c esp_fpu.c esp_gpio.c esp_rtc_gpio.c esp_libc_stubs.c
+CHIP_CSRCS += esp_irq.c esp_gpio.c esp_rtc_gpio.c esp_libc_stubs.c
 CHIP_CSRCS += esp_lowputc.c esp_serial.c
 CHIP_CSRCS += esp_systemreset.c
 
@@ -86,10 +86,6 @@ endif
 
 ifeq ($(CONFIG_ESPRESSIF_LEDC),y)
 	CHIP_CSRCS += esp_ledc.c
-endif
-
-ifeq ($(CONFIG_ESPRESSIF_MIPI_DSI),y)
-	CHIP_CSRCS += esp_mipi_dsi.c
 endif
 
 ifeq ($(CONFIG_ESP_PCNT),y)
@@ -229,10 +225,6 @@ LDFLAGS += -u esp_timer_init_include_func
 
 ifeq ($(CONFIG_ESPRESSIF_EFUSE),y)
 	LDFLAGS += -u esp_efuse_startup_include_func
-endif
-
-ifeq ($(CONFIG_ESP32P4_SELECTS_REV_LESS_V3),y)
-	LDFLAGS += --wrap=riscv_restorefpu
 endif
 
 #############################################################################

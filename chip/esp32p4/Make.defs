@@ -26,6 +26,15 @@ include common/Make.defs
 include common/espressif/Make.defs
 
 CHIP_CSRCS += esp_chip_rev.c
+CHIP_CSRCS += esp_clic.c esp_fpu.c
+
+ifeq ($(CONFIG_ESPRESSIF_MIPI_DSI),y)
+	CHIP_CSRCS += esp_mipi_dsi.c
+endif
+
+ifeq ($(CONFIG_ESP32P4_SELECTS_REV_LESS_V3),y)
+	LDFLAGS += --wrap=riscv_restorefpu
+endif
 
 CFLAGS += ${DEFINE_PREFIX}_RETARGETABLE_LOCKING
 
