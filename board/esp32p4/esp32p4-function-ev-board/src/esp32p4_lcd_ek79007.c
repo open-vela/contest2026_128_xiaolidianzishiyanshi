@@ -22,7 +22,7 @@
 #include <arch/board/board.h>
 
 #include "espressif/esp_gpio.h"
-#include "espressif/esp_mipi_dsi.h"
+#include "esp_mipi_dsi.h"
 
 #include "esp32p4-function-ev-board.h"
 
