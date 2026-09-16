@@ -127,7 +127,7 @@ mode 典型值。48 MHz 位于数据手册允许范围内，对应约 56 Hz。
 核心文件：
 
 ```text
-chip/esp32p4/espressif/esp_mipi_dsi.c
+chip/esp32p4/esp_mipi_dsi.c
 chip/esp32p4/espressif/CMakeLists.txt
 chip/esp32p4/espressif/Make.defs
 chip/esp32p4/Kconfig

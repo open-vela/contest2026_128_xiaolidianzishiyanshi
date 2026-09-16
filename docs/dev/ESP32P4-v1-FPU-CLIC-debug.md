@@ -429,17 +429,17 @@ task 保存的 FS 状态。
 | 文件 | 修改内容 |
 | --- | --- |
 | `chip/esp32p4/Kconfig` | rev<3 配置选择异常上下文扩展 |
-| `chip/esp32p4/espressif/esp_fpu.c` | EXT_ILL 分类、首次 FCSR 初始化、restore hook |
-| `chip/esp32p4/espressif/esp_fpu.h` | FPU 初始化接口 |
-| `chip/esp32p4/espressif/esp_clic.c` | 新任务 mcause 与 FS 初始状态 |
-| `chip/esp32p4/espressif/riscv_extctx.S` | 保存和恢复完整 mcause |
+| `chip/esp32p4/esp_fpu.c` | EXT_ILL 分类、首次 FCSR 初始化、restore hook |
+| `chip/esp32p4/esp_fpu.h` | FPU 初始化接口 |
+| `chip/esp32p4/esp_clic.c` | 新任务 mcause 与 FS 初始状态 |
+| `chip/esp32p4/riscv_extctx.S` | 保存和恢复完整 mcause |
 | `chip/esp32p4/espressif/esp_irq.c` | 安装 FPU hook，修正 edge IRQ 判断 |
 | `chip/esp32p4/espressif/CMakeLists.txt` | CMake 构建加入新源文件 |
 | `chip/esp32p4/espressif/Make.defs` | Make 构建加入新源文件 |
 | `board/esp32p4/common/scripts/esp32p4_sections.ld` | 修正 cache object IRAM 匹配 |
 | `board/esp32p4/common/scripts/esp32p4_sections.rev3.ld` | 同步修正 rev3 链接脚本 |
 
-`chip/esp32p4/espressif/esp_mipi_dsi.c` 在任务开始前已有用户自己的未提交修改，本次
+`chip/esp32p4/esp_mipi_dsi.c` 在任务开始前已有用户自己的未提交修改，本次
 FPU/CLIC 修复没有覆盖或还原该文件。
 
 ## 9. 构建与烧写
