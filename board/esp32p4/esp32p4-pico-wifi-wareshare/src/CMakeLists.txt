@@ -38,7 +38,7 @@ if(CONFIG_ARCH_BUTTONS)
 endif()
 
 if(CONFIG_INPUT_FT5X06)
-  list(APPEND SRCS esp32p4_touchscreen.c)
+  list(APPEND SRCS esp32p4_ft5x06.c esp32p4_touchscreen.c)
 endif()
 
 if(CONFIG_LCD)

@@ -56,6 +56,9 @@
 
 #ifndef __ASSEMBLY__
 
+struct ft5x06_config_s;
+struct i2c_master_s;
+
 /****************************************************************************
  * Public Function Prototypes
  ****************************************************************************/
@@ -123,6 +126,9 @@ int esp_gpio_init(void);
  ****************************************************************************/
 
 #ifdef CONFIG_INPUT_FT5X06
+int esp32p4_ft6336_register(struct i2c_master_s *i2c,
+                            const struct ft5x06_config_s *config,
+                            int minor);
 int board_touchscreen_initialize(void);
 #endif
 

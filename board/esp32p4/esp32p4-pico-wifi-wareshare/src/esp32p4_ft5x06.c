@@ -1,5 +1,6 @@
 /****************************************************************************
- * drivers/input/ft5x06.c
+ * boards/risc-v/esp32p4/esp32p4-pico-wifi-wareshare/src/
+ * esp32p4_ft5x06.c
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -65,6 +66,8 @@
 #include <nuttx/input/touchscreen.h>
 #include <nuttx/input/ft5x06.h>
 
+#include <arch/board/board.h>
+
 #include "ft5x06.h"
 
 /****************************************************************************
@@ -79,6 +82,10 @@
 
 #define DEV_FORMAT     "/dev/input%d"
 #define DEV_NAMELEN    16
+
+/* LVGL currently reads one touch point per input report. */
+
+#define ESP32P4_FT6336_MAXPOINTS 1
 
 /* In polled mode, the polling rate will decrease when there is no touch
  * activity.  These definitions represent the maximum and the minimum
@@ -665,9 +672,6 @@ errout:
 static int ft5x06_bringup(FAR struct ft5x06_dev_s *priv)
 {
   FAR const struct ft5x06_config_s *config;
-  struct i2c_msg_s msg;
-  uint8_t data[2];
-  int ret;
 
   /* Get a pointer the callbacks for convenience (and so the code is not so
    * ugly).
@@ -676,22 +680,10 @@ static int ft5x06_bringup(FAR struct ft5x06_dev_s *priv)
   config = priv->config;
   DEBUGASSERT(config != NULL);
 
-  /* Set device mode to normal operation */
-
-  data[0]       = FT5X06_TOUCH_MODE_REG;   /* Register address */
-  data[1]       = FT5X06_DEV_MODE_WORKING; /* Normal mode */
-
-  msg.frequency = priv->frequency;         /* I2C frequency */
-  msg.addr      = config->address;         /* 7-bit address */
-  msg.flags     = 0;                       /* Write transaction with START */
-  msg.buffer    = data;                    /* Send two bytes followed by STOP */
-  msg.length    = 2;
-
-  ret = I2C_TRANSFER(priv->i2c, &msg, 1);
-  if (ret < 0)
-    {
-      return ret;
-    }
+  /* The FT6336 enters working mode after reset.  Do not rewrite its device
+   * mode on first open: this board's controller rejects that transaction
+   * even though register reads and touch reports work normally.
+   */
 
 #ifndef CONFIG_FT5X06_POLLMODE
   /* Enable FT5x06 interrupts */
@@ -893,8 +885,6 @@ static ssize_t ft5x06_read(FAR struct file *filep, FAR char *buffer,
         }
     }
 
-  ret = SIZEOF_TOUCH_SAMPLE_S(1);
-
 errout:
   nxmutex_unlock(&priv->devlock);
   return ret;
@@ -942,6 +932,36 @@ static int ft5x06_ioctl(FAR struct file *filep, int cmd, unsigned long arg)
           FAR uint32_t *ptr = (FAR uint32_t *)((uintptr_t)arg);
           DEBUGASSERT(priv->config != NULL && ptr != NULL);
           *ptr = priv->frequency;
+        }
+        break;
+
+      case TSIOC_GETMAXPOINTS:  /* arg: Pointer to uint8_t max touch point */
+        {
+          FAR uint8_t *ptr = (FAR uint8_t *)((uintptr_t)arg);
+
+          if (ptr == NULL)
+            {
+              ret = -EINVAL;
+              break;
+            }
+
+          *ptr = ESP32P4_FT6336_MAXPOINTS;
+        }
+        break;
+
+      case TSIOC_GETRESOLUTION: /* arg: Pointer to touch_resolution_s */
+        {
+          FAR struct touch_resolution_s *ptr =
+            (FAR struct touch_resolution_s *)((uintptr_t)arg);
+
+          if (ptr == NULL)
+            {
+              ret = -EINVAL;
+              break;
+            }
+
+          ptr->res_x = BOARD_LCD_WIDTH;
+          ptr->res_y = BOARD_LCD_HEIGHT;
         }
         break;
 
@@ -1054,7 +1074,7 @@ errout:
  ****************************************************************************/
 
 /****************************************************************************
- * Name: ft5x06_register
+ * Name: esp32p4_ft6336_register
  *
  * Description:
  *   Configure the FT5x06 to use the provided I2C device instance.  This
@@ -1072,8 +1092,9 @@ errout:
  *
  ****************************************************************************/
 
-int ft5x06_register(FAR struct i2c_master_s *i2c,
-                    FAR const struct ft5x06_config_s *config, int minor)
+int esp32p4_ft6336_register(FAR struct i2c_master_s *i2c,
+                           FAR const struct ft5x06_config_s *config,
+                           int minor)
 {
   FAR struct ft5x06_dev_s *priv;
   char devname[DEV_NAMELEN];

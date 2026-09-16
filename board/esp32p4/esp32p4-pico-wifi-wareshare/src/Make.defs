@@ -40,7 +40,7 @@ ifeq ($(CONFIG_ARCH_BUTTONS),y)
 endif
 
 ifeq ($(CONFIG_INPUT_FT5X06),y)
-  CSRCS += esp32p4_touchscreen.c
+  CSRCS += esp32p4_ft5x06.c esp32p4_touchscreen.c
 endif
 
 ifeq ($(CONFIG_LCD),y)

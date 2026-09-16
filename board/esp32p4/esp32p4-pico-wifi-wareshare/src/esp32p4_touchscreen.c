@@ -37,6 +37,8 @@
 #include "espressif/esp_gpio.h"
 #include "espressif/esp_i2c.h"
 
+#include "esp32p4-pico-wifi.h"
+
 /****************************************************************************
  * Private Function Prototypes
  ****************************************************************************/
@@ -151,7 +153,7 @@ int board_touchscreen_initialize(void)
       return -ENODEV;
     }
 
-  ret = ft5x06_register(i2c, &g_ft5x06_config, 0);
+  ret = esp32p4_ft6336_register(i2c, &g_ft5x06_config, 0);
   if (ret < 0)
     {
       esp_i2cbus_uninitialize(i2c);
