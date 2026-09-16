@@ -8,3 +8,11 @@ config LVX_USE_DEMO_CONTEST2026_000_HELLO_APP
 	default n
 	---help---
 		Enable the contest 2026 team 000 hello app demo.
+
+config LVX_USE_DEMO_CONTEST2026_128_LCD_TEST
+	bool "Contest 2026 team 128 LCD test"
+	default n
+	depends on LCD_DEV
+	---help---
+		Draw RGB565 color bars, a border, and a center cross through the
+		NuttX /dev/lcd0 character-device interface.

@@ -39,6 +39,14 @@ ifeq ($(CONFIG_ARCH_BUTTONS),y)
   CSRCS += esp32p4_buttons.c
 endif
 
+ifeq ($(CONFIG_INPUT_FT5X06),y)
+  CSRCS += esp32p4_touchscreen.c
+endif
+
+ifeq ($(CONFIG_LCD),y)
+  CSRCS += esp32p4_lcd_st7796.c
+endif
+
 DEPPATH += --dep-path board
 VPATH += :board
 CFLAGS += ${INCDIR_PREFIX}$(TOPDIR)$(DELIM)arch$(DELIM)$(CONFIG_ARCH)$(DELIM)src$(DELIM)board$(DELIM)board

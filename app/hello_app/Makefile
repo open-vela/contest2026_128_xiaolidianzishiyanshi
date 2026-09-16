@@ -4,11 +4,21 @@
 
 include $(APPDIR)/Make.defs
 
-PROGNAME  = hello_app
+PROGNAME =
+MAINSRC  =
+
+ifneq ($(CONFIG_LVX_USE_DEMO_CONTEST2026_000_HELLO_APP),)
+PROGNAME += hello_app
+MAINSRC  += hello_app_main.c
+endif
+
+ifneq ($(CONFIG_LVX_USE_DEMO_CONTEST2026_128_LCD_TEST),)
+PROGNAME += lcd_test
+MAINSRC  += lcd_test_main.c
+endif
+
 PRIORITY  = SCHED_PRIORITY_DEFAULT
 STACKSIZE = 2048
-MODULE    = $(CONFIG_LVX_USE_DEMO_CONTEST2026_000_HELLO_APP)
-
-MAINSRC = hello_app_main.c
+MODULE    = y
 
 include $(APPDIR)/Application.mk

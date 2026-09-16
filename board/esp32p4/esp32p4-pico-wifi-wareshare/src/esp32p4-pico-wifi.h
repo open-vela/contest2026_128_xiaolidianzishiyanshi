@@ -111,5 +111,31 @@ int board_twai_setup(int port);
 int esp_gpio_init(void);
 #endif
 
+/****************************************************************************
+ * Name: board_touchscreen_initialize
+ *
+ * Description:
+ *   Initialize the FT6336 touch controller and register /dev/input0.
+ *
+ * Returned Value:
+ *   Zero (OK) on success; a negated errno value on failure.
+ *
+ ****************************************************************************/
+
+#ifdef CONFIG_INPUT_FT5X06
+int board_touchscreen_initialize(void);
+#endif
+
+/****************************************************************************
+ * Name: board_lcd_initialize
+ *
+ * Description:
+ *   Initialize the on-board ST7796 LCD and its SPI interface.
+ ****************************************************************************/
+
+#ifdef CONFIG_LCD
+int board_lcd_initialize(void);
+#endif
+
 #endif /* __ASSEMBLY__ */
 #endif /* __BOARDS_RISCV_ESP32P4_ESP32P4_PICO_WIFI_WARESHARE_SRC_ESP32P4_PICO_WIFI_H */

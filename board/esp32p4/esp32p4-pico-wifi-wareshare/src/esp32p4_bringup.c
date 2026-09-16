@@ -36,6 +36,10 @@
 
 #include <nuttx/fs/fs.h>
 
+#ifdef CONFIG_LCD_DEV
+#  include <nuttx/lcd/lcd_dev.h>
+#endif
+
 #include "esp_board_ledc.h"
 #include "esp_board_spiflash.h"
 #include "esp_board_i2c.h"
@@ -271,6 +275,23 @@ int esp_bringup(void)
 #  endif /* CONFIG_ESPRESSIF_SPI_BITBANG */
 #endif /* CONFIG_ESPRESSIF_SPI */
 
+#ifdef CONFIG_LCD
+  ret = board_lcd_initialize();
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ERROR: Failed to initialize ST7796 LCD: %d\n",
+             ret);
+    }
+#endif
+
+#ifdef CONFIG_LCD_DEV
+  ret = lcddev_register(0);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ERROR: Failed to register /dev/lcd0: %d\n", ret);
+    }
+#endif
+
 #ifdef CONFIG_ESPRESSIF_SPIFLASH
   ret = board_spiflash_init();
   if (ret)
@@ -365,6 +386,15 @@ int esp_bringup(void)
   if (ret < 0)
     {
       ierr("Failed to initialize GPIO Driver: %d\n", ret);
+    }
+#endif
+
+#ifdef CONFIG_INPUT_FT5X06
+  ret = board_touchscreen_initialize();
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ERROR: Failed to initialize touchscreen: %d\n",
+             ret);
     }
 #endif
 
