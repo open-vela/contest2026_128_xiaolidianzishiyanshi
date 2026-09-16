@@ -167,6 +167,13 @@ static int esp_fb_init_thread(int argc, char *argv[])
   (void)argv;
 
   syslog(LOG_INFO, "MIPI: framebuffer initialization started\n");
+  ret = board_mipi_dsi_initialize();
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ERROR: Failed to configure MIPI panel: %d\n", ret);
+      return ret;
+    }
+
   ret = fb_register(0, 0);
   if (ret < 0)
     {

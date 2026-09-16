@@ -42,6 +42,10 @@ ifeq ($(CONFIG_ESPRESSIF_EMAC),y)
   CSRCS += esp32p4_ethernet.c
 endif
 
+ifeq ($(CONFIG_ESPRESSIF_MIPI_DSI),y)
+  CSRCS += esp32p4_lcd_ek79007.c
+endif
+
 DEPPATH += --dep-path board
 VPATH += :board
 CFLAGS += ${INCDIR_PREFIX}$(TOPDIR)$(DELIM)arch$(DELIM)$(CONFIG_ARCH)$(DELIM)src$(DELIM)board$(DELIM)board

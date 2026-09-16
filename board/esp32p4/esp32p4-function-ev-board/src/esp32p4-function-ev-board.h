@@ -132,5 +132,17 @@ int esp_gpio_init(void);
 int board_emac_init(void);
 #endif
 
+/****************************************************************************
+ * Name: board_mipi_dsi_initialize
+ *
+ * Description:
+ *   Register the board's EK79007 bus, DPI and panel configuration with the
+ *   ESP32-P4 MIPI-DSI host driver.
+ ****************************************************************************/
+
+#ifdef CONFIG_ESPRESSIF_MIPI_DSI
+int board_mipi_dsi_initialize(void);
+#endif
+
 #endif /* __ASSEMBLY__ */
 #endif /* __BOARDS_RISCV_ESP32P4_ESP32P4_FUNCTION_EV_BOARD_SRC_ESP32P4_FUNCTION_EV_BOARD_H */

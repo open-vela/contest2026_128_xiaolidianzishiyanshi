@@ -49,6 +49,10 @@ if(CONFIG_ESP_HOSTED)
   list(APPEND SRCS esp32p4_board_esp_hosted.c)
 endif()
 
+if(CONFIG_ESPRESSIF_MIPI_DSI)
+  list(APPEND SRCS esp32p4_lcd_ek79007.c)
+endif()
+
 target_sources(board PRIVATE ${SRCS})
 
 # ##############################################################################
