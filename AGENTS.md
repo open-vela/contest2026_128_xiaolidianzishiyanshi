@@ -20,9 +20,9 @@
 - VS Code 调试配置：`/home/lxy/openvela/.vscode/launch.json`
 - RISC-V GDB：`/home/lxy/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20251107/riscv32-esp-elf/bin/riscv32-esp-elf-gdb`
 - OpenOCD GDB target：`extended-remote :3333`
-- 应用镜像 flash offset：`0x20000`
+- 应用镜像 flash offset：`0x2000`
 - OpenOCD 启动命令：`openocd -f board/esp32p4-builtin.cfg`
-- OpenOCD 烧录命令：`openocd -f board/esp32p4-builtin.cfg -c "init; reset halt; program_esp <nuttx.bin> 0x20000 verify; reset run; shutdown"`
+- OpenOCD 烧录命令：`openocd -f board/esp32p4-builtin.cfg -c "init; reset halt; program_esp <nuttx.bin> 0x2000 verify; reset run; shutdown"`
 - 静态定位优先使用：`riscv32-esp-elf-addr2line`、`objdump`、`nm`、`readelf`
 - ESP32-P4 v1.x FPU/CLIC 调试记录：`docs/dev/ESP32P4-v1-FPU-CLIC-debug.md`
 

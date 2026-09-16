@@ -12,3 +12,4 @@
 
 - [ESP32P4 CMake LD_SCRIPT列表问题排查与修复](ESP32P4-CMake-LD_SCRIPT-fix.md)
 - [ESP32-P4 v1.x FPU、CLIC 与启动卡死调试记录](ESP32P4-v1-FPU-CLIC-debug.md)
+- [ESP32-P4 O0 优化启动重启问题排查与修复](ESP32P4-O0-early-boot-IRAM-debug.md)
