@@ -128,6 +128,7 @@ mode 典型值。48 MHz 位于数据手册允许范围内，对应约 56 Hz。
 
 ```text
 chip/esp32p4/esp_mipi_dsi.c
+chip/esp32p4/espressif/esp_mipi_dsi.h
 chip/esp32p4/espressif/CMakeLists.txt
 chip/esp32p4/espressif/Make.defs
 chip/esp32p4/Kconfig
@@ -139,8 +140,13 @@ chip/esp32p4/hal_esp32p4.cmake
 ```text
 board/esp32p4/esp32p4-function-ev-board/configs/mipi/defconfig
 board/esp32p4/esp32p4-function-ev-board/src/esp32p4_bringup.c
+board/esp32p4/esp32p4-function-ev-board/src/esp32p4_lcd_ek79007.c
 board/esp32p4/esp32p4-function-ev-board/include/board.h
 ```
+
+芯片层只保留 DSI host/PHY、DPI bridge、DW-GDMA 和 framebuffer 机制；板级
+`esp32p4_lcd_ek79007.c` 提供 lane rate、分辨率/porch/像素格式、复位与背光
+GPIO、EK79007 DCS 初始化表、BIST 选择及面板诊断，避免芯片驱动绑定具体屏幕。
 
 `esp32p4_bringup.c` 使用独立 `mipi_fb` kthread 调用 `fb_register(0, 0)`，避免
 显示初始化阻塞 NSH 启动链。后台日志统一使用 `syslog()`，不与 NSH 竞争
@@ -238,9 +244,9 @@ stop wait time = 0x3f
 
 ### 6.9 DCS read 诊断结论
 
-曾使用 `GET_POWER_MODE (0x0A)` 验证双向链路。LP 配置前读超时；LP 配置后能
-得到 payload，但返回 `00`，同时出现 `int_st0=0x00100000`，即 D-PHY LP
-contention。为避免 BTA 诊断影响后续视频，当前版本已移除启动时 DCS read。
+使用 `GET_DISPLAY_ID (0x04)` 和 `GET_POWER_MODE (0x0A)` 验证双向链路。
+单次读取仅在命令期间启用 BTA，随后关闭 BTA、清空 RX FIFO 和残留中断状态，
+避免诊断影响后续视频。读回失败只记录告警，不阻断面板初始化。
 
 ## 7. 当前 EK79007 初始化序列
 
