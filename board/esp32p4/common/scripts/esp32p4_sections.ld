@@ -293,7 +293,7 @@ SECTIONS
     *libarch.a:spi_flash_os_func_noos.*(.literal .literal.* .text .text.*)
     *libarch.a:spi_flash_os_func_app.*(.literal .literal.* .text .text.*)
     *libarch.a:flash_brownout_hook.*(.literal .literal.* .text .text.*)
-    *libarch.a:esp_cache.*(.literal .literal.* .text .text.*)
+    *libarch.a:esp_cache*.*(.literal .literal.* .text .text.*)
     *libarch.a:cache_utils.*(.literal .literal.* .text .text.*)
     *libarch.a:memspi_host_driver.*(.literal .literal.* .text .text.*)
 
@@ -450,7 +450,7 @@ SECTIONS
     *libarch.a:spi_flash_os_func_noos.*(.rodata .rodata.*)
     *libarch.a:spi_flash_os_func_app.*(.rodata .rodata.*)
     *libarch.a:flash_brownout_hook.*(.rodata .rodata.*)
-    *libarch.a:esp_cache.*(.rodata .rodata.*)
+    *libarch.a:esp_cache*.*(.rodata .rodata.*)
     *libarch.a:cache_utils.*(.rodata .rodata.*)
     *libarch.a:memspi_host_driver.*(.rodata .rodata.*)
 

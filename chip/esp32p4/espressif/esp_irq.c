@@ -41,6 +41,7 @@
 
 #include "esp_gpio.h"
 #include "esp_irq.h"
+#include "esp_fpu.h"
 #include "esp_rtc_gpio.h"
 
 #include "esp_attr.h"
@@ -311,6 +312,12 @@ void up_irqinitialize(void)
   /* Attach the common interrupt handler */
 
   riscv_exception_attach();
+
+  /* Install the ESP32-P4 rev 0.x/1.x FPU illegal-instruction hook after
+   * the common handlers so it can selectively override that one slot.
+   */
+
+  esp_fpu_exception_initialize();
 
 #ifndef CONFIG_SUPPRESS_INTERRUPTS
 
@@ -594,7 +601,7 @@ IRAM_ATTR void *riscv_dispatch_irq(uintreg_t mcause, uintreg_t *regs)
         }
 #endif
 
-      is_edge = esprv_int_get_type(cpuint) == INTR_TYPE_LEVEL;
+      is_edge = esprv_int_get_type(cpuint) == INTR_TYPE_EDGE;
       if (is_edge)
         {
           /* Clear edge interrupts. */

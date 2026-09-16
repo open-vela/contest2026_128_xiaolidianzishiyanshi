@@ -30,7 +30,8 @@ list(APPEND SRCS esp_vectors.S)
 
 # Required common source files
 list(APPEND SRCS esp_allocateheap.c esp_start.c esp_idle.c)
-list(APPEND SRCS esp_irq.c esp_gpio.c esp_rtc_gpio.c esp_libc_stubs.c)
+list(APPEND SRCS esp_irq.c esp_clic.c esp_fpu.c esp_gpio.c esp_rtc_gpio.c
+                 esp_libc_stubs.c)
 list(APPEND SRCS esp_lowputc.c esp_serial.c)
 list(APPEND SRCS esp_systemreset.c)
 
@@ -386,6 +387,10 @@ endif()
 list(APPEND _esp_startup_u_opts "SHELL:-u esp_flash_spi_init_include_func")
 
 target_link_options(nuttx PRIVATE ${_esp_startup_u_opts})
+
+if(CONFIG_ESP32P4_SELECTS_REV_LESS_V3)
+  target_link_options(nuttx PRIVATE -Wl,--wrap=riscv_restorefpu)
+endif()
 
 # ##############################################################################
 # Include chip-specific HAL configuration

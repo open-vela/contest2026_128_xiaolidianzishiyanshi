@@ -11,3 +11,4 @@
 ### 移植ESP32-P4并跑通NSH
 
 - [ESP32P4 CMake LD_SCRIPT列表问题排查与修复](ESP32P4-CMake-LD_SCRIPT-fix.md)
+- [ESP32-P4 v1.x FPU、CLIC 与启动卡死调试记录](ESP32P4-v1-FPU-CLIC-debug.md)

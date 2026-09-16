@@ -32,15 +32,19 @@
 
 #include <nuttx/arch.h>
 #include <nuttx/irq.h>
+#include <nuttx/kmalloc.h>
 #include <nuttx/mutex.h>
+#include <nuttx/spinlock.h>
 #include <nuttx/video/fb.h>
 #include <nuttx/video/mipi_dsi.h>
 
 #include <arch/board/board.h>
 
-#include "esp_attr.h"
 #include "esp_cache.h"
 #include "esp_clk_tree.h"
+#include "esp_private/esp_psram_extram.h"
+#include "esp_private/periph_ctrl.h"
+#include "hal/config.h"
 #include "hal/clk_gate_ll.h"
 #include "hal/dw_gdma_hal.h"
 #include "hal/dw_gdma_ll.h"
@@ -61,9 +65,17 @@
 #define DSI_BUS                 0
 #define DSI_LANES               2
 #define DSI_LANE_RATE_MBPS      650
-#define DSI_PHY_REF_HZ          40000000
 #define DSI_POLL_LOOPS          100000
 #define DSI_DMA_CHANNEL         0
+
+#if HAL_CONFIG(CHIP_SUPPORT_MIN_REV) >= 300
+#  define DSI_PHY_REF_HZ        40000000
+#  define DSI_PHY_PLLREF_CLK_SRC MIPI_DSI_PHY_PLLREF_CLK_SRC_DEFAULT
+#else
+#  define DSI_PHY_REF_HZ        20000000
+#  define DSI_PHY_PLLREF_CLK_SRC \
+    MIPI_DSI_PHY_PLLREF_CLK_SRC_DEFAULT_LEGACY
+#endif
 
 #define LCD_WIDTH               1024
 #define LCD_HEIGHT              600
@@ -115,8 +127,7 @@ static struct esp_dsi_s g_dsi =
   .lock = NXMUTEX_INITIALIZER,
 };
 
-static uint8_t g_framebuffer[LCD_FB_SIZE]
-  EXT_RAM_BSS_ATTR __attribute__((aligned(64)));
+static FAR uint8_t *g_framebuffer;
 
 static const struct fb_videoinfo_s g_vinfo =
 {
@@ -633,18 +644,20 @@ static int esp_dsi_hardware_initialize(struct esp_dsi_s *priv)
   syslog(LOG_INFO, "MIPI: 2.5V PHY LDO enabled\n");
 
   syslog(LOG_INFO, "MIPI: enabling DSI peripheral clocks\n");
-  flags = up_irq_save();
-  _clk_gate_ll_ref_20m_clk_en(true);
-  _mipi_dsi_ll_enable_bus_clock(DSI_BUS, true);
-  (mipi_dsi_ll_reset_register)(DSI_BUS);
-  _mipi_dsi_ll_set_phy_config_clock_source(
-    DSI_BUS, MIPI_DSI_PHY_CFG_CLK_SRC_DEFAULT);
-  (mipi_dsi_ll_enable_phy_config_clock)(DSI_BUS, true);
-  _mipi_dsi_ll_set_phy_pllref_clock_source(
-    DSI_BUS, MIPI_DSI_PHY_PLLREF_CLK_SRC_DEFAULT);
-  _mipi_dsi_ll_set_phy_pll_ref_clock_div(DSI_BUS, 1);
-  (mipi_dsi_ll_enable_phy_pllref_clock)(DSI_BUS, true);
-  up_irq_restore(flags);
+  PERIPH_RCC_ATOMIC()
+    {
+      clk_gate_ll_ref_20m_clk_en(true);
+      mipi_dsi_ll_enable_bus_clock(DSI_BUS, true);
+      mipi_dsi_ll_reset_register(DSI_BUS);
+      mipi_dsi_ll_set_phy_config_clock_source(
+        DSI_BUS, MIPI_DSI_PHY_CFG_CLK_SRC_DEFAULT);
+      mipi_dsi_ll_enable_phy_config_clock(DSI_BUS, true);
+      mipi_dsi_ll_set_phy_pllref_clock_source(
+        DSI_BUS, DSI_PHY_PLLREF_CLK_SRC);
+      mipi_dsi_ll_set_phy_pll_ref_clock_div(DSI_BUS, 1);
+      mipi_dsi_ll_enable_phy_pllref_clock(DSI_BUS, true);
+    }
+
   syslog(LOG_INFO, "MIPI: DSI and REF_20M clocks enabled\n");
 
   syslog(LOG_INFO, "MIPI: configuring DSI PHY and PLL\n");
@@ -871,24 +884,20 @@ static int esp_dsi_hardware_initialize(struct esp_dsi_s *priv)
 
   priv->hal.expect_dpi_clock_freq_mhz = 48.0f;
   div = mipi_dsi_hal_host_dpi_calculate_divider(&priv->hal, 240.0f, 48.0f);
-  flags = up_irq_save();
-  _clk_gate_ll_ref_240m_clk_en(true);
-  (mipi_dsi_ll_set_dpi_clock_source)(DSI_BUS,
-                                     MIPI_DSI_DPI_CLK_SRC_DEFAULT);
-  (mipi_dsi_ll_set_dpi_clock_div)(DSI_BUS, div);
-  (mipi_dsi_ll_enable_dpi_clock)(DSI_BUS, true);
-  up_irq_restore(flags);
+  PERIPH_RCC_ATOMIC()
+    {
+      clk_gate_ll_ref_240m_clk_en(true);
+      mipi_dsi_ll_set_dpi_clock_source(DSI_BUS,
+                                       MIPI_DSI_DPI_CLK_SRC_DEFAULT);
+      mipi_dsi_ll_set_dpi_clock_div(DSI_BUS, div);
+      mipi_dsi_ll_enable_dpi_clock(DSI_BUS, true);
+    }
+
   syslog(LOG_INFO, "MIPI: REF_240M and DPI clocks enabled (div=%lu)\n",
          (unsigned long)div);
 
   mipi_dsi_host_ll_dpi_set_vcid(priv->hal.host, 0);
 
-  /* ESP32-P4 v3.x exposes separate requested and active video registers.
-   * Disable shadow to write directly to active registers, avoiding
-   * potential issues with shadow commit not completing before video start.
-   */
-
-  priv->hal.host->vid_shadow_ctrl.vid_shadow_en = 0;
   mipi_dsi_host_ll_dpi_set_color_coding(priv->hal.host,
                                          LCD_COLOR_FMT_RGB888, 0);
   mipi_dsi_host_ll_dpi_set_timing_polarity(priv->hal.host, false, false,
@@ -1017,7 +1026,29 @@ int up_fbinitialize(int display)
 
   if (!g_dsi.initialized)
     {
-      memset(g_framebuffer, 0, sizeof(g_framebuffer));
+      if (g_framebuffer == NULL)
+        {
+          g_framebuffer = kmm_memalign(64, LCD_FB_SIZE);
+          if (g_framebuffer == NULL)
+            {
+              syslog(LOG_ERR,
+                     "ERROR: MIPI framebuffer allocation failed (%u bytes)\n",
+                     (unsigned int)LCD_FB_SIZE);
+              return -ENOMEM;
+            }
+
+          if (!esp_psram_check_ptr_addr(g_framebuffer) ||
+              !esp_psram_check_ptr_addr(g_framebuffer + LCD_FB_SIZE - 1))
+            {
+              syslog(LOG_ERR,
+                     "ERROR: MIPI framebuffer was not allocated in PSRAM\n");
+              kmm_free(g_framebuffer);
+              g_framebuffer = NULL;
+              return -ENOMEM;
+            }
+        }
+
+      memset(g_framebuffer, 0, LCD_FB_SIZE);
       ret = esp_dsi_hardware_initialize(&g_dsi);
       if (ret >= 0)
         {

@@ -50,11 +50,24 @@ source "../vendor/espressif/chips/esp32p4/espressif/esp_hosted/Kconfig"
 config ESP32P4_SELECTS_REV_LESS_V3
 	bool "Select ESP32-P4 revisions <3.0 (No >=3.x Support)"
 	default n
+	select ARCH_RISCV_INTXCPT_EXTENSIONS
 	---help---
 		Select this option to support ESP32-P4 revisions 0.x and 1.x.
 		Revisions higher than 3.0 (included) and revisions less than 3.0
 		have huge hardware difference.
 		Revisions higher than 3.0 (included) is not compatible with 0.x and 1.x.
+
+if ESP32P4_SELECTS_REV_LESS_V3
+
+# The generic RISC-V default is parsed before this custom-chip Kconfig.
+# Constrain the value so affected revisions cannot retain that zero default.
+
+config ARCH_RISCV_INTXCPT_EXTREGS
+	int
+	range 1 1
+	default 1
+
+endif # ESP32P4_SELECTS_REV_LESS_V3
 
 config ESPRESSIF_MIPI_DSI
 	bool "ESP32-P4 MIPI-DSI framebuffer"
