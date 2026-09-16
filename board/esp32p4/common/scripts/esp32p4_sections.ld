@@ -280,6 +280,8 @@ SECTIONS
     *libarch.a:critical_section.*(.literal .literal.* .text .text.*)
     *libarch.a:os.*(.literal.nuttx_enter_critical .text.nuttx_enter_critical)
     *libarch.a:os.*(.literal.nuttx_exit_critical .text.nuttx_exit_critical)
+    *libarch.a:os.*(.literal.up_irq_save .text.up_irq_save)
+    *libarch.a:os.*(.literal.up_irq_restore .text.up_irq_restore)
     *libarch.a:spi_flash_hpm_enable.*(.literal .literal.* .text .text.*)
     *libarch.a:*sleep_modes.*(.literal.esp_sleep_pd_config* .text.esp_sleep_pd_config*)
     *libarch.a:esp_spiflash.*(.literal .text .literal.* .text.*)
