@@ -27,3 +27,19 @@ if(CONFIG_LVX_USE_DEMO_CONTEST2026_128_PPA_TEST)
     INCLUDE_DIRECTORIES ${NUTTX_CHIP_ABS_DIR}
     STACKSIZE 4096)
 endif()
+
+if(CONFIG_LVX_USE_DEMO_CONTEST2026_128_LVGL_PPA)
+  nuttx_add_application(
+    NAME lvgl_ppa
+    SRCS lvgl_ppa_demo_main.c lv_draw_ppa_nuttx.c
+    INCLUDE_DIRECTORIES ${NUTTX_CHIP_ABS_DIR}
+    STACKSIZE 8192)
+
+  if(CONFIG_LV_USE_DEMO_WIDGETS)
+    nuttx_add_application(
+      NAME lvgl_widget
+      SRCS lvgl_widget_main.c lv_draw_ppa_nuttx.c
+      INCLUDE_DIRECTORIES ${NUTTX_CHIP_ABS_DIR}
+      STACKSIZE 32768)
+  endif()
+endif()

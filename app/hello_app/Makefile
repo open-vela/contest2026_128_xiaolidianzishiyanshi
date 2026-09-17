@@ -37,6 +37,20 @@ PRIORITY += SCHED_PRIORITY_DEFAULT
 STACKSIZE += 4096
 endif
 
+ifneq ($(CONFIG_LVX_USE_DEMO_CONTEST2026_128_LVGL_PPA),)
+PROGNAME += lvgl_ppa
+MAINSRC  += lvgl_ppa_demo_main.c
+CSRCS    += lv_draw_ppa_nuttx.c
+PRIORITY += SCHED_PRIORITY_DEFAULT
+STACKSIZE += 8192
+ifneq ($(CONFIG_LV_USE_DEMO_WIDGETS),)
+PROGNAME += lvgl_widget
+MAINSRC  += lvgl_widget_main.c
+PRIORITY += SCHED_PRIORITY_DEFAULT
+STACKSIZE += 32768
+endif
+endif
+
 MODULE    = y
 
 include $(APPDIR)/Application.mk

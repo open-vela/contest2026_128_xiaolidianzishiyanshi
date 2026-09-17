@@ -32,3 +32,18 @@ config LVX_USE_DEMO_CONTEST2026_128_PPA_TEST
 	---help---
 		Build the ppa_test NSH application.  It validates PPA output against
 		an independent CPU reference and checks DMA guard regions.
+
+config LVX_USE_DEMO_CONTEST2026_128_LVGL_PPA
+	bool "Contest 2026 team 128 LVGL ESP32-P4 PPA demo"
+	default n
+	depends on ESP32P4_PPA
+	depends on GRAPHICS_LVGL
+	depends on LV_USE_NUTTX
+	depends on LV_USE_NUTTX_LCD
+	---help---
+		Build the lvgl_ppa NSH application and the application-side LVGL 9.1
+		draw-unit adapter.  The adapter accelerates fills, RGB/A8/ARGB variable
+		images, alpha blending, color keying, scaling, and right-angle rotation
+		through PPA, leaving unsupported tasks to software.  When the LVGL
+		widgets demo is enabled, also build the lvgl_widget application with
+		the same PPA draw unit registered before creating the widgets UI.
