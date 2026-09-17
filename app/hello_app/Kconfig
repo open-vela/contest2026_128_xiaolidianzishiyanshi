@@ -24,3 +24,11 @@ config LVX_USE_DEMO_CONTEST2026_128_TOUCH_TEST
 	---help---
 		Open a NuttX touchscreen character device, report its ioctl
 		capabilities, and print touch samples received through poll/read.
+
+config LVX_USE_DEMO_CONTEST2026_128_PPA_TEST
+	bool "Contest 2026 team 128 ESP32-P4 PPA functional test"
+	default n
+	depends on ESP32P4_PPA
+	---help---
+		Build the ppa_test NSH application.  It validates PPA output against
+		an independent CPU reference and checks DMA guard regions.

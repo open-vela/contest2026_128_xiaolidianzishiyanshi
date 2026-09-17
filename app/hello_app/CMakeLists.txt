@@ -19,3 +19,11 @@ if(CONFIG_LVX_USE_DEMO_CONTEST2026_128_TOUCH_TEST)
     SRCS touch_test_main.c
     STACKSIZE 2048)
 endif()
+
+if(CONFIG_LVX_USE_DEMO_CONTEST2026_128_PPA_TEST)
+  nuttx_add_application(
+    NAME ppa_test
+    SRCS ppa_test_main.c
+    INCLUDE_DIRECTORIES ${NUTTX_CHIP_ABS_DIR}
+    STACKSIZE 4096)
+endif()

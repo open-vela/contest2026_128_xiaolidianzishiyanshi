@@ -4,6 +4,7 @@
 
 ifneq ($(filter y m,$(CONFIG_LVX_USE_DEMO_CONTEST2026_000_HELLO_APP) \
                     $(CONFIG_LVX_USE_DEMO_CONTEST2026_128_LCD_TEST) \
-                    $(CONFIG_LVX_USE_DEMO_CONTEST2026_128_TOUCH_TEST)),)
+                    $(CONFIG_LVX_USE_DEMO_CONTEST2026_128_TOUCH_TEST) \
+                    $(CONFIG_LVX_USE_DEMO_CONTEST2026_128_PPA_TEST)),)
 CONFIGURED_APPS += $(APPDIR)/packages/demos/contest2026_128_hello_app
 endif
