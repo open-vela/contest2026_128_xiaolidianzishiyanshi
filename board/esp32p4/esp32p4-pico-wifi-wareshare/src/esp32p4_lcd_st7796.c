@@ -359,6 +359,40 @@ static void st7796_sendrow_locked(struct st7796_dev_s *priv,
                 npixels * ST7796_BYTES_PER_PIXEL);
 }
 
+static int st7796_fill(struct st7796_dev_s *priv, uint16_t color)
+{
+  size_t col;
+  size_t row;
+  int ret;
+
+  ret = st7796_begin(priv);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  st7796_setarea_locked(priv, 0, 0,
+                        BOARD_LCD_WIDTH - 1, BOARD_LCD_HEIGHT - 1);
+  st7796_command_locked(priv, ST7796_RAMWR, NULL, 0);
+  esp_gpiowrite(BOARD_LCD_DC_PIN, true);
+
+  /* Prepare one scan line and reuse it for the entire display. */
+
+  for (col = 0; col < BOARD_LCD_WIDTH; col++)
+    {
+      priv->txbuffer[2 * col]     = color >> 8;
+      priv->txbuffer[2 * col + 1] = color & 0xff;
+    }
+
+  for (row = 0; row < BOARD_LCD_HEIGHT; row++)
+    {
+      SPI_SNDBLOCK(priv->spi, priv->txbuffer, sizeof(priv->txbuffer));
+    }
+
+  st7796_end(priv);
+  return OK;
+}
+
 static int st7796_panel_initialize(struct st7796_dev_s *priv)
 {
   static const uint8_t madctl = ST7796_MADCTL_BGR | ST7796_MADCTL_MX;
@@ -403,6 +437,16 @@ static int st7796_panel_initialize(struct st7796_dev_s *priv)
     }
 
   ret = st7796_command(priv, ST7796_INVON, NULL, 0);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  /* Clear the panel GRAM while the backlight is still off, so stale pixels
+   * are never visible during startup.
+   */
+
+  ret = st7796_fill(priv, 0x0000);
   if (ret < 0)
     {
       return ret;
