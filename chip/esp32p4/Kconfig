@@ -286,5 +286,28 @@ config ESP32P4_SDMMC_SLOT1_PIN_D3
 
 endif # ESP32P4_SDMMC
 
+menuconfig ESP32P4_PPA
+	bool "ESP32-P4 Pixel Processing Accelerator"
+	default n
+	depends on ARCH_CHIP_ESP32P4
+	---help---
+		Enable the synchronous ESP32-P4 Pixel Processing Accelerator driver.
+		The first implementation serializes all PPA users and reserves fixed
+		DMA2D channels, so it must not run concurrently with another DMA2D
+		consumer.
+
+if ESP32P4_PPA
+
+config ESP32P4_PPA_TIMEOUT_MS
+	int "PPA blocking operation timeout in milliseconds"
+	default 1000
+	range 10 10000
+
+config ESP32P4_PPA_DEBUG
+	bool "Enable PPA debug logging"
+	default n
+
+endif # ESP32P4_PPA
+
 
 endif # ARCH_CHIP_CUSTOM

@@ -89,6 +89,8 @@ set(ESP32P4_INCLUDES
     ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_pcnt/include
     ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_pmu/${CHIP_SERIES}/include
     ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_pmu/include
+    ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_ppa/${CHIP_SERIES}/include
+    ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_ppa/include
     ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_rmt/${CHIP_SERIES}/include
     ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_rmt/include
     ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_rtc_timer/${CHIP_SERIES}/include
@@ -561,6 +563,15 @@ if(CONFIG_ESPRESSIF_MIPI_DSI)
     ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_lcd/mipi_dsi_hal.c
     ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_lcd/${CHIP_SERIES}/mipi_dsi_periph.c
     ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_dma/dw_gdma_hal.c)
+endif()
+
+if(CONFIG_ESP32P4_PPA)
+  list(
+    APPEND
+    HAL_SRCS
+    ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_ppa/ppa_hal.c
+    ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_dma/dma2d_hal.c
+    ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_dma/${CHIP_SERIES}/dma2d_periph.c)
 endif()
 
 target_sources(arch PRIVATE ${HAL_SRCS})
