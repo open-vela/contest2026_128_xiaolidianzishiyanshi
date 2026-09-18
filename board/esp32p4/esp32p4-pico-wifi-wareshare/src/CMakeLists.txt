@@ -45,6 +45,10 @@ if(CONFIG_LCD)
   list(APPEND SRCS esp32p4_lcd_st7796.c)
 endif()
 
+if(CONFIG_ESP_HOSTED)
+  list(APPEND SRCS esp32p4_board_esp_hosted.c)
+endif()
+
 target_sources(board PRIVATE ${SRCS})
 
 # ##############################################################################

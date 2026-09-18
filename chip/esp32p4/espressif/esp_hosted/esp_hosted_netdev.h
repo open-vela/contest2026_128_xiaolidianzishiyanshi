@@ -55,4 +55,7 @@ int esp_hosted_netdev_register(void);
 
 int esp_hosted_netdev_rx_notify(uint8_t *data, uint16_t len);
 
+void esp_hosted_netdev_sta_connected(void);
+void esp_hosted_netdev_sta_disconnected(void);
+
 #endif /* __ESP_HOSTED_NETDEV_H__ */

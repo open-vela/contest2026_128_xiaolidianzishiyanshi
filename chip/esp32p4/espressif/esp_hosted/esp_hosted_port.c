@@ -47,14 +47,27 @@
 #include <nuttx/wqueue.h>
 
 #include "esp_hosted_port.h"
+#ifdef CONFIG_ESP_HOSTED_NETDEV
+#  include "esp_hosted_netdev.h"
+#endif
 #include "esp_hosted_os_abstraction.h"
 #include "esp_hosted.h"
+#include "esp_gpio.h"
+#include "esp_wifi_types.h"
+
+#ifdef CONFIG_ESP_HOSTED_SDIO
+#  include "port_esp_hosted_host_sdio.h"
+#endif
 
 /****************************************************************************
  * Pre-processor Definitions
  ****************************************************************************/
 
 #define TIMER_SIGNAL SIGRTMIN
+
+#define HOSTED_GPIO_MODE_INPUT   (1u << 0)
+#define HOSTED_GPIO_MODE_OUTPUT  (1u << 1)
+#define HOSTED_GPIO_MODE_OD      (1u << 2)
 
 /****************************************************************************
  * Private Types
@@ -75,8 +88,8 @@ struct hosted_timer_s {
  * Private Data
  ****************************************************************************/
 
-ESP_EVENT_DECLARE_BASE(ESP_HOSTED_EVENT);
-ESP_EVENT_DECLARE_BASE(WIFI_EVENT);
+ESP_EVENT_DEFINE_BASE(ESP_HOSTED_EVENT);
+ESP_EVENT_DEFINE_BASE(WIFI_EVENT);
 
 /****************************************************************************
  * Private Functions
@@ -267,15 +280,22 @@ static unsigned int hosted_blocking_delay(unsigned int number)
  * Queue Functions
  ****************************************************************************/
 
+struct hosted_queue_s
+{
+    mqd_t wait;
+    mqd_t poll;
+    size_t msgsize;
+};
+
 static void *hosted_create_queue(uint32_t qnum_elem, uint32_t qitem_size)
 {
-    mqd_t *mqd;
+    struct hosted_queue_s *queue;
     struct mq_attr attr;
     char mqname[32];
     static int queue_id = 0;
 
-    mqd = (mqd_t *)kumm_malloc(sizeof(mqd_t));
-    if (!mqd) {
+    queue = kumm_malloc(sizeof(*queue));
+    if (!queue) {
         return NULL;
     }
 
@@ -286,40 +306,45 @@ static void *hosted_create_queue(uint32_t qnum_elem, uint32_t qitem_size)
     attr.mq_msgsize = qitem_size;
     attr.mq_curmsgs = 0;
 
-    *mqd = mq_open(mqname, O_CREAT | O_RDWR, 0666, &attr);
-    if (*mqd == (mqd_t)-1) {
-        kumm_free(mqd);
+    queue->wait = mq_open(mqname, O_CREAT | O_RDWR, 0666, &attr);
+    if (queue->wait == (mqd_t)-1) {
+        kumm_free(queue);
         return NULL;
     }
 
-    return mqd;
+    queue->poll = mq_open(mqname, O_RDWR | O_NONBLOCK);
+    if (queue->poll == (mqd_t)-1) {
+        mq_close(queue->wait);
+        mq_unlink(mqname);
+        kumm_free(queue);
+        return NULL;
+    }
+
+    queue->msgsize = qitem_size;
+
+    /* Both descriptors keep the queue alive.  Removing its name here also
+     * prevents stale /hosted_qN objects after a transport restart.
+     */
+
+    mq_unlink(mqname);
+    return queue;
 }
 
 static int hosted_queue_item(void *queue_handle, void *item, int timeout)
 {
-    mqd_t *mqd = (mqd_t *)queue_handle;
-    struct mq_attr attr;
+    struct hosted_queue_s *queue = queue_handle;
     unsigned int prio = 0;
 
-    if (!mqd || !item) {
+    if (!queue || !item) {
         return -EINVAL;
     }
 
-    mq_getattr(*mqd, &attr);
-
     if (timeout == HOSTED_BLOCK_MAX) {
-        return mq_send(*mqd, (const char *)item, attr.mq_msgsize, prio);
+        return mq_send(queue->wait, (const char *)item,
+                       queue->msgsize, prio);
     } else if (timeout == 0) {
-        /* Non-blocking */
-
-        struct timespec ts;
-        clock_gettime(CLOCK_REALTIME, &ts);
-        ts.tv_nsec += 1000000; /* 1ms */
-        if (ts.tv_nsec >= 1000000000) {
-            ts.tv_sec++;
-            ts.tv_nsec -= 1000000000;
-        }
-        return mq_timedsend(*mqd, (const char *)item, attr.mq_msgsize, prio, &ts);
+        return mq_send(queue->poll, (const char *)item,
+                       queue->msgsize, prio);
     } else {
         struct timespec ts;
         clock_gettime(CLOCK_REALTIME, &ts);
@@ -329,34 +354,27 @@ static int hosted_queue_item(void *queue_handle, void *item, int timeout)
             ts.tv_sec++;
             ts.tv_nsec -= 1000000000;
         }
-        return mq_timedsend(*mqd, (const char *)item, attr.mq_msgsize, prio, &ts);
+        return mq_timedsend(queue->wait, (const char *)item,
+                            queue->msgsize, prio, &ts);
     }
 }
 
 static int hosted_dequeue_item(void *queue_handle, void *item, int timeout)
 {
-    mqd_t *mqd = (mqd_t *)queue_handle;
-    struct mq_attr attr;
+    struct hosted_queue_s *queue = queue_handle;
     unsigned int prio = 0;
     ssize_t ret;
 
-    if (!mqd || !item) {
+    if (!queue || !item) {
         return -EINVAL;
     }
 
-    mq_getattr(*mqd, &attr);
-
     if (timeout == HOSTED_BLOCK_MAX) {
-        ret = mq_receive(*mqd, (char *)item, attr.mq_msgsize, &prio);
+        ret = mq_receive(queue->wait, (char *)item,
+                         queue->msgsize, &prio);
     } else if (timeout == 0) {
-        struct timespec ts;
-        clock_gettime(CLOCK_REALTIME, &ts);
-        ts.tv_nsec += 1000000; /* 1ms */
-        if (ts.tv_nsec >= 1000000000) {
-            ts.tv_sec++;
-            ts.tv_nsec -= 1000000000;
-        }
-        ret = mq_timedreceive(*mqd, (char *)item, attr.mq_msgsize, &prio, &ts);
+        ret = mq_receive(queue->poll, (char *)item,
+                         queue->msgsize, &prio);
     } else {
         struct timespec ts;
         clock_gettime(CLOCK_REALTIME, &ts);
@@ -366,7 +384,8 @@ static int hosted_dequeue_item(void *queue_handle, void *item, int timeout)
             ts.tv_sec++;
             ts.tv_nsec -= 1000000000;
         }
-        ret = mq_timedreceive(*mqd, (char *)item, attr.mq_msgsize, &prio, &ts);
+        ret = mq_timedreceive(queue->wait, (char *)item,
+                              queue->msgsize, &prio, &ts);
     }
 
     return (ret < 0) ? -errno : 0;
@@ -374,24 +393,25 @@ static int hosted_dequeue_item(void *queue_handle, void *item, int timeout)
 
 static int hosted_queue_msg_waiting(void *queue_handle)
 {
-    mqd_t *mqd = (mqd_t *)queue_handle;
+    struct hosted_queue_s *queue = queue_handle;
     struct mq_attr attr;
 
-    if (!mqd) {
+    if (!queue) {
         return 0;
     }
 
-    mq_getattr(*mqd, &attr);
+    mq_getattr(queue->wait, &attr);
     return attr.mq_curmsgs;
 }
 
 static int hosted_destroy_queue(void *queue_handle)
 {
-    mqd_t *mqd = (mqd_t *)queue_handle;
+    struct hosted_queue_s *queue = queue_handle;
 
-    if (mqd) {
-        mq_close(*mqd);
-        kumm_free(mqd);
+    if (queue) {
+        mq_close(queue->poll);
+        mq_close(queue->wait);
+        kumm_free(queue);
     }
     return 0;
 }
@@ -400,19 +420,17 @@ static int hosted_reset_queue(void *queue_handle)
 {
     /* NuttX doesn't have a direct queue reset, drain messages */
 
-    mqd_t *mqd = (mqd_t *)queue_handle;
+    struct hosted_queue_s *queue = queue_handle;
     struct mq_attr attr;
     char buf[256];
     unsigned int prio;
 
-    if (!mqd) {
+    if (!queue) {
         return -EINVAL;
     }
 
-    mq_getattr(*mqd, &attr);
-    while (attr.mq_curmsgs > 0) {
-        mq_timedreceive(*mqd, buf, attr.mq_msgsize, &prio, NULL);
-        attr.mq_curmsgs--;
+    mq_getattr(queue->wait, &attr);
+    while (mq_receive(queue->poll, buf, attr.mq_msgsize, &prio) >= 0) {
     }
 
     return 0;
@@ -490,8 +508,18 @@ static int hosted_destroy_mutex(void *mutex_handle)
 static void *hosted_create_semaphore(int maxCount)
 {
     sem_t *sem = (sem_t *)kumm_malloc(sizeof(sem_t));
+
+    (void)maxCount;
+
     if (sem) {
-        nxsem_init(sem, 0, maxCount);
+        /* Match the ESP-Hosted FreeRTOS port: every new semaphore starts
+         * with one token.  Callers that need an initially empty semaphore
+         * immediately take that token after creation.  Initializing a
+         * counting semaphore to maxCount lets transport/RPC waits run before
+         * data or a response is available.
+         */
+
+        nxsem_init(sem, 0, 1);
     }
     return sem;
 }
@@ -499,10 +527,32 @@ static void *hosted_create_semaphore(int maxCount)
 static int hosted_post_semaphore(void *semaphore_handle)
 {
     sem_t *sem = (sem_t *)semaphore_handle;
+    int sem_value;
+    int ret;
+
     if (!sem) {
         return -EINVAL;
     }
-    return nxsem_post(sem);
+
+    /* ESP-Hosted creates its SDIO producer and consumer at the same
+     * priority.  IDF's FreeRTOS scheduler gives the unblocked consumer a
+     * prompt opportunity to run; a single-core NuttX SCHED_NORMAL producer
+     * can otherwise keep polling until the long RR interval expires.  In
+     * streaming mode that leaves double_buf.read_index occupied and makes
+     * the following stream get dropped.
+     *
+     * Yield only when this post wakes a waiter.  Do not do this in the ISR
+     * variant below: an interrupt return already performs the required
+     * reschedule and sched_yield() is not an ISR operation.
+     */
+
+    nxsem_get_value(sem, &sem_value);
+    ret = nxsem_post(sem);
+    if (ret == 0 && sem_value < 0) {
+        sched_yield();
+    }
+
+    return ret;
 }
 
 static int hosted_post_semaphore_from_isr(void *semaphore_handle)
@@ -618,9 +668,33 @@ static uint64_t hosted_get_time_ms(void)
 
 static int hosted_config_gpio(void *gpio_port, uint32_t gpio_num, uint32_t mode)
 {
-    /* TODO: Implement using NuttX GPIO API */
+    gpio_pinattr_t attr = 0;
 
-    return 0;
+    (void)gpio_port;
+
+    if ((mode & HOSTED_GPIO_MODE_INPUT) != 0)
+      {
+        attr |= INPUT;
+      }
+
+    if ((mode & HOSTED_GPIO_MODE_OUTPUT) != 0)
+      {
+        attr |= OUTPUT;
+      }
+
+    if ((mode & HOSTED_GPIO_MODE_OD) != 0)
+      {
+        attr |= OPEN_DRAIN;
+      }
+
+    /* A disabled pin is left as a high-impedance input. */
+
+    if (attr == 0)
+      {
+        attr = INPUT;
+      }
+
+    return esp_configgpio((int)gpio_num, attr);
 }
 
 static int hosted_config_gpio_as_interrupt(void *gpio_port, uint32_t gpio_num,
@@ -642,16 +716,17 @@ static int hosted_teardown_gpio_interrupt(void *gpio_port, uint32_t gpio_num)
 
 static int hosted_read_gpio(void *gpio_port, uint32_t gpio_num)
 {
-    /* TODO: Implement using NuttX GPIO API */
+    (void)gpio_port;
 
-    return 0;
+    return esp_gpioread((int)gpio_num) ? 1 : 0;
 }
 
 static int hosted_write_gpio(void *gpio_port, uint32_t gpio_num, uint32_t value)
 {
-    /* TODO: Implement using NuttX GPIO API */
+    (void)gpio_port;
 
-    return 0;
+    esp_gpiowrite((int)gpio_num, value != 0);
+    return OK;
 }
 
 static int hosted_pull_gpio(void *gpio_port, uint32_t gpio_num,
@@ -679,6 +754,7 @@ static int hosted_get_host_wakeup_or_reboot_reason(void)
  * Transport Functions (Stubs - implemented by transport adapters)
  ****************************************************************************/
 
+#ifndef CONFIG_ESP_HOSTED_SDIO
 static void *hosted_bus_init(void)
 {
     /* Implemented by transport adapter */
@@ -699,6 +775,7 @@ static int hosted_do_bus_transfer(void *transfer_context)
 
     return -ENOSYS;
 }
+#endif
 
 /****************************************************************************
  * Event Functions
@@ -708,7 +785,18 @@ static int hosted_event_wifi_post(int32_t event_id, void *event_data,
                                   size_t event_data_size,
                                   uint32_t ticks_to_wait)
 {
-    /* TODO: Dispatch via NuttX work queue */
+    (void)event_data;
+    (void)event_data_size;
+    (void)ticks_to_wait;
+
+#ifdef CONFIG_ESP_HOSTED_NETDEV
+    if (event_id == WIFI_EVENT_STA_CONNECTED) {
+        esp_hosted_netdev_sta_connected();
+    } else if (event_id == WIFI_EVENT_STA_DISCONNECTED ||
+               event_id == WIFI_EVENT_STA_STOP) {
+        esp_hosted_netdev_sta_disconnected();
+    }
+#endif
 
     wlinfo("Wi-Fi event: %ld\n", (long)event_id);
     return 0;
@@ -863,9 +951,15 @@ hosted_osi_funcs_t g_hosted_osi_funcs = {
     ._h_get_host_wakeup_or_reboot_reason = hosted_get_host_wakeup_or_reboot_reason,
 
     /* Bus */
+#ifdef CONFIG_ESP_HOSTED_SDIO
+    ._h_bus_init = hosted_sdio_init,
+    ._h_bus_deinit = hosted_sdio_deinit,
+    ._h_do_bus_transfer = NULL,
+#else
     ._h_bus_init = hosted_bus_init,
     ._h_bus_deinit = hosted_bus_deinit,
     ._h_do_bus_transfer = hosted_do_bus_transfer,
+#endif
 
     /* Event */
     ._h_event_wifi_post = hosted_event_wifi_post,
@@ -873,6 +967,15 @@ hosted_osi_funcs_t g_hosted_osi_funcs = {
     ._h_hosted_init_hook = hosted_init_hook,
 
     /* SDIO */
+#ifdef CONFIG_ESP_HOSTED_SDIO
+    ._h_sdio_card_init = hosted_sdio_card_init,
+    ._h_sdio_card_deinit = hosted_sdio_card_deinit,
+    ._h_sdio_read_reg = hosted_sdio_read_reg,
+    ._h_sdio_write_reg = hosted_sdio_write_reg,
+    ._h_sdio_read_block = hosted_sdio_read_block,
+    ._h_sdio_write_block = hosted_sdio_write_block,
+    ._h_sdio_wait_slave_intr = hosted_sdio_wait_slave_intr,
+#else
     ._h_sdio_card_init = NULL,
     ._h_sdio_card_deinit = NULL,
     ._h_sdio_read_reg = NULL,
@@ -880,6 +983,7 @@ hosted_osi_funcs_t g_hosted_osi_funcs = {
     ._h_sdio_read_block = NULL,
     ._h_sdio_write_block = NULL,
     ._h_sdio_wait_slave_intr = NULL,
+#endif
 
     /* SPI HD */
     ._h_spi_hd_read_reg = NULL,
@@ -928,4 +1032,16 @@ int esp_hosted_port_init(void)
     sigaction(TIMER_SIGNAL, &sa, NULL);
 
     return 0;
+}
+
+int esp_hosted_port_start(void)
+{
+    int ret;
+
+    ret = esp_hosted_init();
+    if (ret < 0) {
+        return ret;
+    }
+
+    return esp_hosted_connect_to_slave();
 }

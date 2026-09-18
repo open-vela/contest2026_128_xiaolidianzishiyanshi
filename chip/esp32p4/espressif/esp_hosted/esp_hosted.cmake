@@ -15,9 +15,14 @@ set(ESP_HOSTED_SRCS)
 
 list(APPEND ESP_HOSTED_SRCS
   ${CMAKE_CURRENT_LIST_DIR}/esp_hosted_port.c
-  ${CMAKE_CURRENT_LIST_DIR}/esp_hosted_netdev.c
   ${CMAKE_CURRENT_LIST_DIR}/esp_netif_stub.c
+  ${CMAKE_CURRENT_LIST_DIR}/esp_wifi_remote_stub.c
 )
+
+if(CONFIG_ESP_HOSTED_NETDEV)
+  list(APPEND ESP_HOSTED_SRCS
+    ${CMAKE_CURRENT_LIST_DIR}/esp_hosted_netdev.c)
+endif()
 
 # ##############################################################################
 # Transport adaptation (this directory, selected by config)
@@ -25,7 +30,10 @@ list(APPEND ESP_HOSTED_SRCS
 
 if(CONFIG_ESP_HOSTED_SDIO)
   list(APPEND ESP_HOSTED_SRCS
-    ${CMAKE_CURRENT_LIST_DIR}/esp_hosted_transport_sdio.c)
+    ${CMAKE_CURRENT_LIST_DIR}/esp_hosted_transport_sdio.c
+    ${ESP_HOSTED_SDIO_PATCHED_SOURCE}
+    ${ESP_HOSTED_ROOT}/host/port/esp/freertos/src/port_esp_hosted_host_transport_defaults.c
+    ${NUTTX_DIR}/drivers/mmcsd/sdio.c)
 elseif(CONFIG_ESP_HOSTED_SPI)
   list(APPEND ESP_HOSTED_SRCS
     ${CMAKE_CURRENT_LIST_DIR}/esp_hosted_transport_spi.c)
@@ -43,6 +51,8 @@ list(APPEND ESP_HOSTED_SRCS
   ${ESP_HOSTED_ROOT}/host/drivers/transport/transport_util.c
   ${ESP_HOSTED_ROOT}/host/drivers/serial/serial_drv.c
   ${ESP_HOSTED_ROOT}/host/drivers/serial/serial_ll_if.c
+  ${ESP_HOSTED_ROOT}/host/drivers/power_save/power_save_drv.c
+  ${ESP_HOSTED_ROOT}/host/utils/stats.c
 )
 
 # ##############################################################################
@@ -81,16 +91,12 @@ list(APPEND ESP_HOSTED_SRCS
 # ##############################################################################
 
 list(APPEND ESP_HOSTED_SRCS
-  ${ESP_HOSTED_ROOT}/common/protobuf-c/protobuf-c/protobuf-c.c
+  ${ESP_HOSTED_PROTOBUF_ROOT}/protobuf-c/protobuf-c.c
   ${ESP_HOSTED_ROOT}/common/proto/esp_hosted_rpc.pb-c.c
 )
 
-if(CONFIG_ESP_HOSTED_USE_MEMPOOL)
-  list(APPEND ESP_HOSTED_SRCS
-    ${ESP_HOSTED_ROOT}/common/mempool/mempool.c
-    ${ESP_HOSTED_ROOT}/common/mempool/mempool_ll.c
-  )
-endif()
+# The upstream mempool low-level implementation is FreeRTOS-specific.  The
+# NuttX port deliberately uses kumm_malloc()/kumm_memalign() instead.
 
 # ##############################################################################
 # Bluetooth (optional)

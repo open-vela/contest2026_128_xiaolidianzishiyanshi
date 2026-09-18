@@ -80,6 +80,10 @@ struct i2c_master_s;
 
 int esp_bringup(void);
 
+#ifdef CONFIG_ESP_HOSTED
+int board_esp_hosted_initialize(void);
+#endif
+
 /****************************************************************************
  * Name: board_twai_setup
  *

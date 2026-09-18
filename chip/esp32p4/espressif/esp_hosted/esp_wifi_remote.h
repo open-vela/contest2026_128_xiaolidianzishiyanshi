@@ -74,6 +74,10 @@ void esp_wifi_remote_channel_set(int wifi_if,
 
 esp_err_t esp_wifi_remote_connect(void);
 
+/* Send one frame through the data channel installed by ESP-Hosted. */
+
+esp_err_t esp_wifi_remote_channel_tx(int wifi_if, void *buffer, size_t len);
+
 #ifdef __cplusplus
 }
 #endif

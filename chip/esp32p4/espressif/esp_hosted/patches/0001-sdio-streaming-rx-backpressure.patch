@@ -1,0 +1,149 @@
+diff --git a/host/drivers/transport/sdio/sdio_drv.c b/host/drivers/transport/sdio/sdio_drv.c
+index f47ebf25..00000000 100644
+--- a/host/drivers/transport/sdio/sdio_drv.c
++++ b/host/drivers/transport/sdio/sdio_drv.c
+@@ -230,6 +230,9 @@ static double_buf_t double_buf = {
+ // sem to trigger sdio_data_to_rx_buf_task()
+ static semaphore_handle_t sem_double_buf_xfer_data;
+ 
++// one token means the streaming buffer may be filled by sdio_read_task()
++static semaphore_handle_t sem_double_buf_free;
++
+ static void * sdio_rx_buf_thread;
+ static void sdio_data_to_rx_buf_task(void const* pvParameters);
+ 
+@@ -347,6 +350,10 @@ void bus_deinit_internal(void *bus_handle)
+ 		g_h.funcs->_h_destroy_semaphore(sem_double_buf_xfer_data);
+ 		sem_double_buf_xfer_data = NULL;
+ 	}
++	if (sem_double_buf_free) {
++		g_h.funcs->_h_destroy_semaphore(sem_double_buf_free);
++		sem_double_buf_free = NULL;
++	}
+ 
+ #if DO_COMBINED_REG_READ
+     if (reg_buf) {
+@@ -899,7 +906,12 @@ static esp_err_t sdio_push_pkt_to_queue(uint8_t * rxbuff, uint16_t len, uint16_t
+ 		return ESP_FAIL;
+ 	}
+ 
+-	g_h.funcs->_h_queue_item(from_slave_queue[pkt_prio], &buf_handle, HOSTED_BLOCK_MAX);
++	if (g_h.funcs->_h_queue_item(from_slave_queue[pkt_prio], &buf_handle,
++			HOSTED_BLOCK_MAX)) {
++		ESP_LOGE(TAG, "Failed to queue RX packet");
++		sdio_buffer_free(rxbuff);
++		return ESP_FAIL;
++	}
+ 	g_h.funcs->_h_post_semaphore(sem_from_slave_queue);
+ 
+ 	return ESP_OK;
+@@ -1086,6 +1098,7 @@ static void sdio_data_to_rx_buf_task(void const* pvParameters)
+ #endif
+ 		// finished sending data: reset read_index
+ 		double_buf.read_index = -1;
++		g_h.funcs->_h_post_semaphore(sem_double_buf_free);
+ 	}
+ }
+ 
+@@ -1285,9 +1298,20 @@ static void sdio_read_task(void const* pvParameters)
+ 		}
+ #endif
+ 
++		/* The upstream IDF port relies on FreeRTOS scheduling to let the
++		 * streaming consumer release double_buf before another read.  Make
++		 * that ownership explicit for single-core NuttX: never overwrite or
++		 * discard data which has already been removed from the slave FIFO.
++		 */
++
++		SDIO_DRV_UNLOCK();
++		g_h.funcs->_h_get_semaphore(sem_double_buf_free, HOSTED_BLOCK_MAX);
++		SDIO_DRV_LOCK();
++
+ 		/* Allocate rx buffer */
+ 		rxbuff = sdio_rx_get_buffer(len_from_slave);
+ 		if (!rxbuff) {
++			g_h.funcs->_h_post_semaphore(sem_double_buf_free);
+ 			pending = true;
+ 			SDIO_DRV_UNLOCK();
+ 			g_h.funcs->_h_msleep(SDIO_RX_ALLOC_RETRY_MS);
+@@ -1336,7 +1360,9 @@ static void sdio_read_task(void const* pvParameters)
+ #endif
+ 
+-		if (unlikely(ret))
++		if (unlikely(ret)) {
++			g_h.funcs->_h_post_semaphore(sem_double_buf_free);
+ 			continue;
++		}
+ 
+ 		if (double_buf.read_index < 0) {
+ 			double_buf.read_index = double_buf.write_index;
+@@ -1345,10 +1371,12 @@ static void sdio_read_task(void const* pvParameters)
+ 			// trigger task to copy data to queue
+ 			g_h.funcs->_h_post_semaphore(sem_double_buf_xfer_data);
+ 		} else {
+-			// error: task to copy data to queue still running
++			/* The free-slot semaphore makes this unreachable.  Return the
++			 * token if state corruption is ever detected so recovery remains
++			 * possible instead of spinning forever. */
+ 			sdio_rx_free_buffer(rxbuff);
+-			ESP_LOGE(TAG, "task still writing Rx data to queue!");
+-			// don't send data to task, or update write_index
++			ESP_LOGE(TAG, "streaming RX buffer ownership mismatch");
++			g_h.funcs->_h_post_semaphore(sem_double_buf_free);
+ 		}
+ 	}
+ }
+@@ -1538,6 +1566,8 @@ void *bus_init_internal(void)
+ 	sem_double_buf_xfer_data = g_h.funcs->_h_create_semaphore(1);
+ 	assert(sem_double_buf_xfer_data);
+ 	g_h.funcs->_h_get_semaphore(sem_double_buf_xfer_data, 0);
++	sem_double_buf_free = g_h.funcs->_h_create_semaphore(1);
++	assert(sem_double_buf_free);
+ 
+ 	sdio_rx_buf_thread = g_h.funcs->_h_thread_create("sdio_rx_buf",
+ 		DFLT_TASK_PRIO, RX_BUF_TASK_STACK_SIZE, sdio_data_to_rx_buf_task, NULL);
+@@ -1714,6 +1744,10 @@ int ensure_slave_bus_ready(void *bus_handle)
+ 		if (sem_double_buf_xfer_data) {
+ 			while (g_h.funcs->_h_get_semaphore(sem_double_buf_xfer_data, 0) == ESP_OK);
+ 		}
++		if (sem_double_buf_free) {
++			while (g_h.funcs->_h_get_semaphore(sem_double_buf_free, 0) == ESP_OK);
++			g_h.funcs->_h_post_semaphore(sem_double_buf_free);
++		}
+ 
+ 		res = transport_card_init(bus_handle, CARD_INIT_TIMEOUT_MS);
+ 		if (res) {
+@@ -1355,7 +1389,6 @@ static void sdio_process_rx_task(void const* pvParameters)
+ {
+ 	interface_buffer_handle_t buf_handle_l = {0};
+ 	interface_buffer_handle_t *buf_handle = NULL;
+-	int ret = 0;
+ 
+ 	struct esp_priv_event *event = NULL;
+ 
+@@ -1390,7 +1423,12 @@ static void sdio_process_rx_task(void const* pvParameters)
+ 			serial_rx_handler(buf_handle);
+ 		} else if((buf_handle->if_type == ESP_STA_IF) ||
+ 				(buf_handle->if_type == ESP_AP_IF)) {
+-#if 1
++#if defined(ESP_HOSTED_NUTTX)
++			if (chan_arr[buf_handle->if_type] && chan_arr[buf_handle->if_type]->rx) {
++				chan_arr[buf_handle->if_type]->rx(chan_arr[buf_handle->if_type]->api_chan,
++						buf_handle->payload, NULL, buf_handle->payload_len);
++			}
++#else
+ 			if (chan_arr[buf_handle->if_type] && chan_arr[buf_handle->if_type]->rx) {
+ 				/* TODO : Need to abstract heap_caps_malloc */
+ 				uint8_t * copy_payload = (uint8_t *)g_h.funcs->_h_malloc(buf_handle->payload_len);
+@@ -1419,11 +1457,6 @@ static void sdio_process_rx_task(void const* pvParameters)
+ #endif
+ #endif
+ 			}
+-#else
+-			if (chan_arr[buf_handle->if_type] && chan_arr[buf_handle->if_type]->rx) {
+-				chan_arr[buf_handle->if_type]->rx(chan_arr[buf_handle->if_type]->api_chan,
+-						buf_handle->payload, NULL, buf_handle->payload_len);
+-			}
+ #endif
+ 		} else if (buf_handle->if_type == ESP_PRIV_IF) {
+ 			ESP_LOGI(TAG, "Received ESP_PRIV_IF type message");

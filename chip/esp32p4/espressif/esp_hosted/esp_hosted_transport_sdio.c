@@ -1,617 +1,951 @@
 /****************************************************************************
- * arch/risc-v/src/common/espressif/esp_hosted/esp_hosted_transport_sdio.c
+ * arch/risc-v/src/common/espressif/esp_hosted/
+ * esp_hosted_transport_sdio.c
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to you under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *   http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- ****************************************************************************/
-
-/****************************************************************************
- * Included Files
  ****************************************************************************/
 
 #include <nuttx/config.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <assert.h>
-#include <debug.h>
-#include <errno.h>
 
+#include <errno.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <syslog.h>
+
+#include <nuttx/clock.h>
+#include <nuttx/mutex.h>
+#include <nuttx/signal.h>
 #include <nuttx/sdio.h>
-#include <nuttx/kmalloc.h>
 
 #include "esp32p4_sdmmc.h"
-#include "esp_hosted_port.h"
-#include "esp_hosted_os_abstraction.h"
-#include "esp_hosted_transport_config.h"
+#include "espressif/esp_gpio.h"
+#include "port_esp_hosted_host_sdio.h"
 
-/****************************************************************************
- * Pre-processor Definitions
- ****************************************************************************/
+#define SDIO_FUNC_0                 0
+#define SDIO_FUNC_1                 1
 
-#define SDIO_BLOCK_SIZE     512
-#define SDIO_INIT_MAX_RETRY 10
+#define SDIO_CCCR_REVISION          0x00
+#define SDIO_CCCR_IO_ENABLE         0x02
+#define SDIO_CCCR_IO_READY          0x03
+#define SDIO_CCCR_INT_ENABLE        0x04
+#define SDIO_CCCR_IO_ABORT          0x06
+#define SDIO_CCCR_BUS_IF            0x07
+#define SDIO_CCCR_HIGHSPEED         0x13
+#define SDIO_FBR1_INTERFACE_CODE    0x100
 
-#define SDIO_FUNC_0         0
-#define SDIO_FUNC_1         1
+#define SDIO_CCCR_IO_ABORT_RESET    (1u << 3)
+#define SDIO_CCCR_HIGHSPEED_SUPPORT (1u << 0)
+#define SDIO_CCCR_HIGHSPEED_ENABLE  (1u << 1)
+#define SDIO_CMD52_WRITE            (1u << 31)
+#define SDIO_CMD52_ADDRESS_SHIFT    9
 
-/* SDIO CCCR registers */
+#define SDIO_CMD8_ARGUMENT          0x000001aau
 
-#define SD_IO_CCCR_FN_ENABLE    0x02
-#define SD_IO_CCCR_FN_READY     0x03
-#define SD_IO_CCCR_INT_ENABLE   0x04
-#define SD_IO_CCCR_BUS_WIDTH    0x07
+#define ESP_HOSTED_RESET_ASSERT_MS  20
+#define ESP_HOSTED_MIN_RESET_BOOT_MS 1500
 
-/* SDIO FBR registers */
+#if defined(CONFIG_ESP_HOSTED_SDIO_RESET_DELAY_MS) && \
+    CONFIG_ESP_HOSTED_SDIO_RESET_DELAY_MS > ESP_HOSTED_MIN_RESET_BOOT_MS
+#  define ESP_HOSTED_RESET_BOOT_MS CONFIG_ESP_HOSTED_SDIO_RESET_DELAY_MS
+#else
+#  define ESP_HOSTED_RESET_BOOT_MS ESP_HOSTED_MIN_RESET_BOOT_MS
+#endif
 
-#define SD_IO_FBR_START         0x100
+#define ESP_HOSTED_SDIO_IDLE_MS     20
+#define ESP_HOSTED_CMD5_RETRIES     100
+#define ESP_HOSTED_CMD5_DELAY_MS    10
 
-/* SDIO block size registers */
+/* Keep each CMD53 within one ESP32-P4 SDMMC IDMAC descriptor.  Streaming
+ * mode can report tens of KiB queued at once; issuing that as one CMD53
+ * requires a descriptor chain and can leave the IDMAC stopped at an RX
+ * FIFO watermark.  Multiple consecutive CMD53 operations preserve the
+ * incrementing-address semantics while avoiding that failure mode.
+ */
 
-#define SD_IO_CCCR_BLKSIZEL     0x10
-#define SD_IO_CCCR_BLKSIZEH     0x11
+#define ESP_HOSTED_SDIO_DMA_DESC_SIZE       4096
+#define ESP_HOSTED_SDIO_BLOCKS_PER_TRANSFER \
+  (ESP_HOSTED_SDIO_DMA_DESC_SIZE / ESP_HOSTED_SDIO_BLOCK_SIZE)
 
-/* SDIO wrapper macros for NuttX SDIO interface */
+#define ESP_HOSTED_SDIO_OCR_READY   (1u << 31)
+#define ESP_HOSTED_SDIO_OCR_NFUNCS_SHIFT 28
+#define ESP_HOSTED_SDIO_OCR_NFUNCS_MASK  7u
+#define ESP_HOSTED_SDIO_OCR_VOLTAGE_MASK 0x00ff8000u
+#define ESP_HOSTED_SDIO_REG_MASK     0x3ffu
 
-#define SDIO_WRITEFUNC(dev, func, addr, data, len) \
-    sdio_io_rw_extended((dev), true, (func), (addr), true, (data), (len), 1)
-
-#define SDIO_READFUNC(dev, func, addr, data, len) \
-    sdio_io_rw_extended((dev), false, (func), (addr), true, (data), (len), 1)
-
-#define SDIO_READBLOCK(dev, reg, data, blocks) \
-    sdio_io_rw_extended((dev), false, SDIO_FUNC_1, (reg), true, (data), SDIO_BLOCK_SIZE, (blocks))
-
-#define SDIO_WRITEBLOCK(dev, reg, data, blocks) \
-    sdio_io_rw_extended((dev), true, SDIO_FUNC_1, (reg), true, (data), SDIO_BLOCK_SIZE, (blocks))
-
-#define SDIO_SETFREQUENCY(dev, freq) \
-    ((dev)->clock((dev), CLOCK_SD_TRANSFER_4BIT))
-
-#define SDIO_SETBUSWIDTH(dev, width) \
-    sdio_set_wide_bus(dev)
-
-#define SDIO_WAITINT(dev, ticks) \
-    ((dev)->eventwait(dev))
-
-/****************************************************************************
- * Private Types
- ****************************************************************************/
-
-struct hosted_sdio_context {
-    struct sdio_dev_s *sdio_dev;
-    uint32_t clock_freq_khz;
-    uint8_t bus_width;
-    uint8_t slot;
-    mutex_t lock;
+struct hosted_sdio_context_s
+{
+  struct sdio_dev_s *dev;
+  mutex_t lock;
+  bool attached;
+  bool probed;
 };
 
-/****************************************************************************
- * Private Data
- ****************************************************************************/
+static struct hosted_sdio_context_s g_sdio;
 
-static struct hosted_sdio_context *g_sdio_ctx = NULL;
-
-/****************************************************************************
- * Private Function Prototypes (forward declarations)
- ****************************************************************************/
-
-void *hosted_sdio_bus_init(void);
-int hosted_sdio_bus_deinit(void *ctx);
-
-/****************************************************************************
- * Private Functions
- ****************************************************************************/
-
-/****************************************************************************
- * Name: hosted_sdio_set_blocksize
- *
- * Description:
- *   Set SDIO function block size.
- *
- ****************************************************************************/
-
-static int hosted_sdio_set_blocksize(struct sdio_dev_s *dev, uint8_t fn,
-                                     uint16_t size)
+static int hosted_sdio_delay_ms(unsigned int milliseconds)
 {
-    uint8_t lo = size & 0xff;
-    uint8_t hi = (size >> 8) & 0xff;
-    uint16_t offset = SD_IO_FBR_START * fn;
-    int ret;
+  struct timespec request;
+  struct timespec remaining;
+  int ret;
 
-    ret = SDIO_WRITEFUNC(dev, SDIO_FUNC_0,
-                         offset + SD_IO_CCCR_BLKSIZEL, &lo, 1);
-    if (ret < 0) {
-        return ret;
+  /* up_mdelay() is a CPU loop calibrated by CONFIG_BOARD_LOOPSPERMSEC.
+   * That calibration is not accurate on the ESP32-P4 and made a requested
+   * 1500 ms delay last only about 500 ms.  Use the scheduler clock here and
+   * resume the remaining interval if a signal interrupts the sleep.
+   */
+
+  request.tv_sec = milliseconds / MSEC_PER_SEC;
+  request.tv_nsec = (milliseconds % MSEC_PER_SEC) * NSEC_PER_MSEC;
+
+  do
+    {
+      ret = nxsig_nanosleep(&request, &remaining);
+      if (ret == -EINTR)
+        {
+          request = remaining;
+        }
     }
+  while (ret == -EINTR);
 
-    ret = SDIO_WRITEFUNC(dev, SDIO_FUNC_0,
-                         offset + SD_IO_CCCR_BLKSIZEH, &hi, 1);
-    if (ret < 0) {
-        return ret;
-    }
-
-    return 0;
+  return ret;
 }
 
-/****************************************************************************
- * Name: hosted_sdio_card_fn_init
- *
- * Description:
- *   Initialize SDIO card function 1.
- *
- ****************************************************************************/
-
-static int hosted_sdio_card_fn_init(struct sdio_dev_s *dev)
+static int hosted_sdio_send_command(struct sdio_dev_s *dev,
+                                    const char *stage, uint32_t command,
+                                    uint32_t argument)
 {
-    uint8_t ioe = 0;
-    uint8_t ior = 0;
-    uint8_t ie = 0;
-    int i;
-    int ret;
+  int ret;
 
-    /* Enable function 1 */
-
-    ret = SDIO_READFUNC(dev, SDIO_FUNC_0, SD_IO_CCCR_FN_ENABLE, &ioe, 1);
-    if (ret < 0) {
-        return ret;
+  ret = SDIO_SENDCMD(dev, command, argument);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR,
+             "ESP-Hosted: %s command submission failed: %d "
+             "(arg=%08lx)\n",
+             stage, ret, (unsigned long)argument);
+      return ret;
     }
 
-    wlinfo("IOE: 0x%02x\n", ioe);
-
-    ioe |= (1 << 1);  /* FUNC1_EN_MASK */
-    ret = SDIO_WRITEFUNC(dev, SDIO_FUNC_0, SD_IO_CCCR_FN_ENABLE, &ioe, 1);
-    if (ret < 0) {
-        return ret;
+  ret = SDIO_WAITRESPONSE(dev, command);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR,
+             "ESP-Hosted: %s response wait failed: %d (arg=%08lx)\n",
+             stage, ret, (unsigned long)argument);
     }
 
-    /* Wait for card to become ready */
-
-    for (i = 0; i < SDIO_INIT_MAX_RETRY; i++) {
-        ret = SDIO_READFUNC(dev, SDIO_FUNC_0, SD_IO_CCCR_FN_READY, &ior, 1);
-        if (ret < 0) {
-            return ret;
-        }
-
-        wlinfo("IOR: 0x%02x\n", ior);
-        if (ior & (1 << 1)) {
-            break;
-        }
-
-        usleep(10 * 1000);
-    }
-
-    if (i >= SDIO_INIT_MAX_RETRY) {
-        wlerr("ERROR: SDIO card failed to become ready\n");
-        return -ETIMEDOUT;
-    }
-
-    /* Enable interrupts for function 1 and master enable */
-
-    ret = SDIO_READFUNC(dev, SDIO_FUNC_0, SD_IO_CCCR_INT_ENABLE, &ie, 1);
-    if (ret < 0) {
-        return ret;
-    }
-
-    wlinfo("IE: 0x%02x\n", ie);
-
-    ie |= (1 << 0) | (1 << 1);  /* Master enable + FUNC1 */
-    ret = SDIO_WRITEFUNC(dev, SDIO_FUNC_0, SD_IO_CCCR_INT_ENABLE, &ie, 1);
-    if (ret < 0) {
-        return ret;
-    }
-
-    /* Set FN0 and FN1 block size to 512 */
-
-    ret = hosted_sdio_set_blocksize(dev, SDIO_FUNC_0, SDIO_BLOCK_SIZE);
-    if (ret < 0) {
-        return ret;
-    }
-
-    ret = hosted_sdio_set_blocksize(dev, SDIO_FUNC_1, SDIO_BLOCK_SIZE);
-    if (ret < 0) {
-        return ret;
-    }
-
-    return 0;
+  return ret;
 }
 
-/****************************************************************************
- * Public Functions (OSI Interface)
- ****************************************************************************/
+static int hosted_sdio_reset_io(struct sdio_dev_s *dev)
+{
+  uint32_t argument;
+  uint32_t response;
+  int ret;
 
-/****************************************************************************
- * Name: hosted_sdio_card_init
- *
- * Description:
- *   Initialize SDIO card.
- *
- ****************************************************************************/
+  /* Follow the SDIO re-initialization sequence used by ESP-IDF.  Function
+   * zero's CCCR I/O Abort register has a RES bit which resets all I/O
+   * functions.  A card is allowed to stop responding while carrying out
+   * this reset, so a response timeout or CRC/response error is expected and
+   * must not abort enumeration.
+   */
+
+  argument = SDIO_CMD52_WRITE |
+             (SDIO_CCCR_IO_ABORT << SDIO_CMD52_ADDRESS_SHIFT) |
+             SDIO_CCCR_IO_ABORT_RESET;
+
+  syslog(LOG_INFO,
+         "ESP-Hosted: probe stage CMD52 I/O reset (arg=%08lx)\n",
+         (unsigned long)argument);
+
+  ret = SDIO_SENDCMD(dev, SDIO_CMD52, argument);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR,
+             "ESP-Hosted: CMD52 I/O reset submission failed: %d\n", ret);
+      return ret;
+    }
+
+  ret = SDIO_WAITRESPONSE(dev, SDIO_CMD52);
+  if (ret == -ETIMEDOUT || ret == -EIO)
+    {
+      syslog(LOG_INFO,
+             "ESP-Hosted: CMD52 I/O reset completed without a valid R5\n");
+      return OK;
+    }
+
+  if (ret < 0)
+    {
+      syslog(LOG_ERR,
+             "ESP-Hosted: CMD52 I/O reset response wait failed: %d\n",
+             ret);
+      return ret;
+    }
+
+  ret = SDIO_RECVR5(dev, SDIO_CMD52, &response);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR,
+             "ESP-Hosted: CMD52 I/O reset R5 read failed: %d\n", ret);
+      return ret;
+    }
+
+  return OK;
+}
+
+static int hosted_sdio_send_if_cond(struct sdio_dev_s *dev)
+{
+  uint32_t response;
+  int ret;
+
+  /* CMD8 is a memory-card capability probe.  An SDIO-only device normally
+   * does not answer it, which is not an enumeration failure.  Sending it is
+   * nevertheless part of the SD/SDIO reset sequence and is required before
+   * CMD5 by the ESP32-C6 hosted firmware.
+   */
+
+  syslog(LOG_INFO,
+         "ESP-Hosted: probe stage CMD8 interface condition "
+         "(arg=%08lx)\n", (unsigned long)SDIO_CMD8_ARGUMENT);
+
+  ret = SDIO_SENDCMD(dev, SD_CMD8, SDIO_CMD8_ARGUMENT);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ESP-Hosted: CMD8 submission failed: %d\n", ret);
+      return ret;
+    }
+
+  ret = SDIO_WAITRESPONSE(dev, SD_CMD8);
+  if (ret == -ETIMEDOUT)
+    {
+      syslog(LOG_INFO,
+             "ESP-Hosted: CMD8 timed out as expected for an SDIO-only "
+             "device\n");
+      return OK;
+    }
+
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ESP-Hosted: CMD8 response wait failed: %d\n", ret);
+      return ret;
+    }
+
+  ret = SDIO_RECVR7(dev, SD_CMD8, &response);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ESP-Hosted: CMD8 R7 read failed: %d\n", ret);
+      return ret;
+    }
+
+  if ((response & 0xfffu) != SDIO_CMD8_ARGUMENT)
+    {
+      syslog(LOG_ERR,
+             "ESP-Hosted: CMD8 R7 mismatch: %08lx\n",
+             (unsigned long)response);
+      return -EIO;
+    }
+
+  return OK;
+}
+
+static int hosted_sdio_probe_card(struct sdio_dev_s *dev)
+{
+  uint32_t response;
+  uint32_t ocr;
+  unsigned int functions;
+  int retry;
+  int ret;
+
+  nxmutex_init(&dev->mutex);
+
+#ifdef CONFIG_SDIO_MUXBUS
+  ret = SDIO_LOCK(dev, true);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ESP-Hosted: SDMMC bus lock failed: %d\n", ret);
+      return ret;
+    }
+#endif
+
+  ret = hosted_sdio_reset_io(dev);
+  if (ret < 0)
+    {
+      goto out;
+    }
+
+  syslog(LOG_INFO, "ESP-Hosted: probe stage CMD0 GO_IDLE\n");
+  ret = hosted_sdio_send_command(dev, "CMD0", MMCSD_CMD0, 0);
+  if (ret < 0)
+    {
+      goto out;
+    }
+
+  ret = hosted_sdio_delay_ms(ESP_HOSTED_SDIO_IDLE_MS);
+  if (ret < 0)
+    {
+      goto out;
+    }
+
+  ret = hosted_sdio_send_if_cond(dev);
+  if (ret < 0)
+    {
+      goto out;
+    }
+
+  syslog(LOG_INFO, "ESP-Hosted: probe stage CMD5 OCR inquiry\n");
+  ret = hosted_sdio_send_command(dev, "CMD5 inquiry", SDIO_CMD5, 0);
+  if (ret < 0)
+    {
+      goto out;
+    }
+
+  ret = SDIO_RECVR4(dev, SDIO_CMD5, &response);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ESP-Hosted: CMD5 inquiry R4 read failed: %d\n",
+             ret);
+      goto out;
+    }
+
+  functions = (response >> ESP_HOSTED_SDIO_OCR_NFUNCS_SHIFT) &
+              ESP_HOSTED_SDIO_OCR_NFUNCS_MASK;
+  ocr = response & ESP_HOSTED_SDIO_OCR_VOLTAGE_MASK;
+  syslog(LOG_INFO,
+         "ESP-Hosted: CMD5 inquiry R4=%08lx functions=%u ocr=%08lx\n",
+         (unsigned long)response, functions, (unsigned long)ocr);
+
+  if (functions == 0 || ocr == 0)
+    {
+      syslog(LOG_ERR,
+             "ESP-Hosted: CMD5 response is not a usable SDIO device\n");
+      ret = -ENODEV;
+      goto out;
+    }
+
+  syslog(LOG_INFO, "ESP-Hosted: probe stage CMD5 wait for I/O ready\n");
+  for (retry = 0; retry < ESP_HOSTED_CMD5_RETRIES; retry++)
+    {
+      ret = hosted_sdio_send_command(dev, "CMD5 ready poll", SDIO_CMD5,
+                                     ocr);
+      if (ret < 0)
+        {
+          goto out;
+        }
+
+      ret = SDIO_RECVR4(dev, SDIO_CMD5, &response);
+      if (ret < 0)
+        {
+          syslog(LOG_ERR, "ESP-Hosted: CMD5 ready R4 read failed: %d\n",
+                 ret);
+          goto out;
+        }
+
+      if ((response & ESP_HOSTED_SDIO_OCR_READY) != 0)
+        {
+          break;
+        }
+
+      ret = hosted_sdio_delay_ms(ESP_HOSTED_CMD5_DELAY_MS);
+      if (ret < 0)
+        {
+          goto out;
+        }
+    }
+
+  if (retry == ESP_HOSTED_CMD5_RETRIES)
+    {
+      syslog(LOG_ERR,
+             "ESP-Hosted: CMD5 did not become ready, last R4=%08lx\n",
+             (unsigned long)response);
+      ret = -ETIMEDOUT;
+      goto out;
+    }
+
+  syslog(LOG_INFO,
+         "ESP-Hosted: CMD5 ready after %d poll(s), R4=%08lx\n",
+         retry + 1, (unsigned long)response);
+
+  syslog(LOG_INFO, "ESP-Hosted: probe stage CMD3 assign RCA\n");
+  ret = hosted_sdio_send_command(dev, "CMD3", SD_CMD3, 0);
+  if (ret < 0)
+    {
+      goto out;
+    }
+
+  ret = SDIO_RECVR6(dev, SD_CMD3, &response);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ESP-Hosted: CMD3 R6 read failed: %d\n", ret);
+      goto out;
+    }
+
+  ocr = response & 0xffff0000u;
+  syslog(LOG_INFO, "ESP-Hosted: CMD3 R6=%08lx RCA=%04lx\n",
+         (unsigned long)response, (unsigned long)(ocr >> 16));
+
+  syslog(LOG_INFO, "ESP-Hosted: probe stage CMD7 select card\n");
+  ret = hosted_sdio_send_command(dev, "CMD7", MMCSD_CMD7S, ocr);
+  if (ret < 0)
+    {
+      goto out;
+    }
+
+  ret = SDIO_RECVR1(dev, MMCSD_CMD7S, &response);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ESP-Hosted: CMD7 R1 read failed: %d\n", ret);
+      goto out;
+    }
+
+  syslog(LOG_INFO, "ESP-Hosted: CMD7 R1=%08lx\n",
+         (unsigned long)response);
+
+out:
+#ifdef CONFIG_SDIO_MUXBUS
+  SDIO_LOCK(dev, false);
+#endif
+
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  syslog(LOG_INFO, "ESP-Hosted: probe stage CMD52 select 4-bit bus\n");
+  ret = sdio_set_wide_bus(dev);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR,
+             "ESP-Hosted: CMD52 4-bit bus configuration failed: %d\n",
+             ret);
+    }
+
+  return ret;
+}
+
+static int hosted_sdio_reset_slave(void)
+{
+  int ret;
+
+  ret = esp_configgpio(CONFIG_ESP_HOSTED_GPIO_RESET_SLAVE, OUTPUT);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ESP-Hosted: reset GPIO %d configuration failed: %d\n",
+             CONFIG_ESP_HOSTED_GPIO_RESET_SLAVE, ret);
+      return ret;
+    }
+
+  esp_gpiowrite(CONFIG_ESP_HOSTED_GPIO_RESET_SLAVE, false);
+  ret = hosted_sdio_delay_ms(ESP_HOSTED_RESET_ASSERT_MS);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ESP-Hosted: reset assertion delay failed: %d\n", ret);
+      return ret;
+    }
+
+  esp_gpiowrite(CONFIG_ESP_HOSTED_GPIO_RESET_SLAVE, true);
+  syslog(LOG_INFO,
+         "ESP-Hosted: slave reset released; waiting %u ms before CMD52\n",
+         ESP_HOSTED_RESET_BOOT_MS);
+
+  ret = hosted_sdio_delay_ms(ESP_HOSTED_RESET_BOOT_MS);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ESP-Hosted: slave boot delay failed: %d\n", ret);
+    }
+
+  return ret;
+}
+
+static int hosted_sdio_readb(struct sdio_dev_s *dev, uint8_t function,
+                             uint32_t address, uint8_t *value)
+{
+  return sdio_io_rw_direct(dev, false, function, address, 0, value);
+}
+
+static int hosted_sdio_writeb(struct sdio_dev_s *dev, uint8_t function,
+                              uint32_t address, uint8_t value)
+{
+  return sdio_io_rw_direct(dev, true, function, address, value, NULL);
+}
+
+static int hosted_sdio_enable_highspeed(struct sdio_dev_s *dev)
+{
+  uint8_t speed;
+  int ret;
+
+  ret = hosted_sdio_readb(dev, SDIO_FUNC_0, SDIO_CCCR_HIGHSPEED, &speed);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  if ((speed & SDIO_CCCR_HIGHSPEED_SUPPORT) == 0)
+    {
+      syslog(LOG_ERR,
+             "ESP-Hosted: SDIO slave does not support high-speed mode\n");
+      return -ENOTSUP;
+    }
+
+  speed |= SDIO_CCCR_HIGHSPEED_ENABLE;
+  ret = hosted_sdio_writeb(dev, SDIO_FUNC_0, SDIO_CCCR_HIGHSPEED, speed);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  ret = hosted_sdio_readb(dev, SDIO_FUNC_0, SDIO_CCCR_HIGHSPEED, &speed);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  if ((speed & (SDIO_CCCR_HIGHSPEED_SUPPORT |
+                SDIO_CCCR_HIGHSPEED_ENABLE)) !=
+               (SDIO_CCCR_HIGHSPEED_SUPPORT |
+                SDIO_CCCR_HIGHSPEED_ENABLE))
+    {
+      syslog(LOG_ERR,
+             "ESP-Hosted: SDIO high-speed mode did not latch: %02x\n",
+             speed);
+      return -EIO;
+    }
+
+  return OK;
+}
+
+static int hosted_sdio_dump_identity(struct sdio_dev_s *dev)
+{
+  uint8_t revision;
+  uint8_t io_enable;
+  uint8_t io_ready;
+  uint8_t int_enable;
+  uint8_t bus_if;
+  uint8_t interface_code;
+  int ret;
+
+  ret = hosted_sdio_readb(dev, SDIO_FUNC_0, SDIO_CCCR_REVISION, &revision);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  ret = hosted_sdio_readb(dev, SDIO_FUNC_0, SDIO_CCCR_IO_ENABLE,
+                          &io_enable);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  ret = hosted_sdio_readb(dev, SDIO_FUNC_0, SDIO_CCCR_IO_READY, &io_ready);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  ret = hosted_sdio_readb(dev, SDIO_FUNC_0, SDIO_CCCR_INT_ENABLE,
+                          &int_enable);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  ret = hosted_sdio_readb(dev, SDIO_FUNC_0, SDIO_CCCR_BUS_IF, &bus_if);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  ret = hosted_sdio_readb(dev, SDIO_FUNC_0, SDIO_FBR1_INTERFACE_CODE,
+                          &interface_code);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  syslog(LOG_INFO,
+         "ESP-Hosted: CCCR rev=%u SDIO rev=%u IOE=%02x IOR=%02x "
+         "IEN=%02x BUS_IF=%02x F1_IF=%02x\n",
+         revision & 0x0f, revision >> 4, io_enable, io_ready,
+         int_enable, bus_if, interface_code);
+  return OK;
+}
 
 int hosted_sdio_card_init(void *ctx, bool show_config)
 {
-    struct hosted_sdio_context *context = (struct hosted_sdio_context *)ctx;
-    struct sdio_dev_s *dev;
-    int ret;
+  struct hosted_sdio_context_s *priv = ctx;
+  int ret;
 
-    if (!context || !context->sdio_dev) {
-        return -EINVAL;
+  (void)show_config;
+
+  if (priv == NULL || priv->dev == NULL)
+    {
+      return -EINVAL;
     }
 
-    dev = context->sdio_dev;
+  if (priv->probed)
+    {
+      return OK;
+    }
 
-    /* Initialize SDIO bus */
-
-    SDIO_SETFREQUENCY(dev, context->clock_freq_khz * 1000);
-
-    if (context->bus_width == 4) {
-        ret = SDIO_SETBUSWIDTH(dev, 4);
-        if (ret < 0) {
-            wlerr("ERROR: Failed to set 4-bit bus width: %d\n", ret);
-            return ret;
+  if (!priv->attached)
+    {
+      ret = SDIO_ATTACH(priv->dev);
+      if (ret < 0)
+        {
+          syslog(LOG_ERR, "ESP-Hosted: SDMMC IRQ attach failed: %d\n", ret);
+          return ret;
         }
+
+      priv->attached = true;
     }
 
-    /* Initialize card function */
+  SDIO_CLOCK(priv->dev, CLOCK_IDMODE);
 
-    ret = hosted_sdio_card_fn_init(dev);
-    if (ret < 0) {
-        wlerr("ERROR: Failed to initialize SDIO card function: %d\n", ret);
-        return ret;
+  ret = hosted_sdio_probe_card(priv->dev);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ESP-Hosted: SDIO probe failed: %d\n", ret);
+      return ret;
     }
 
-    wlinfo("SDIO card initialized successfully\n");
-    return 0;
+  ret = sdio_enable_function(priv->dev, SDIO_FUNC_1);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ESP-Hosted: enabling SDIO function 1 failed: %d\n",
+             ret);
+      return ret;
+    }
+
+  ret = sdio_set_blocksize(priv->dev, SDIO_FUNC_0,
+                           ESP_HOSTED_SDIO_BLOCK_SIZE);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ESP-Hosted: setting function 0 block size failed: %d\n",
+             ret);
+      return ret;
+    }
+
+  ret = sdio_set_blocksize(priv->dev, SDIO_FUNC_1,
+                           ESP_HOSTED_SDIO_BLOCK_SIZE);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ESP-Hosted: setting function 1 block size failed: %d\n",
+             ret);
+      return ret;
+    }
+
+  /* CCCR IEN bit 0 is the interrupt master enable; bit 1 enables the
+   * ESP-Hosted data function.
+   */
+
+  ret = sdio_enable_interrupt(priv->dev, SDIO_FUNC_0);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ESP-Hosted: enabling SDIO interrupt master failed: %d\n",
+             ret);
+      return ret;
+    }
+
+  ret = sdio_enable_interrupt(priv->dev, SDIO_FUNC_1);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ESP-Hosted: enabling function 1 interrupt failed: %d\n",
+             ret);
+      return ret;
+    }
+
+  ret = hosted_sdio_dump_identity(priv->dev);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ESP-Hosted: CCCR/FBR read failed: %d\n", ret);
+      return ret;
+    }
+
+#if CONFIG_ESP_HOSTED_SDIO_FREQ_KHZ >= 40000
+  ret = hosted_sdio_enable_highspeed(priv->dev);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR,
+             "ESP-Hosted: enabling SDIO high-speed mode failed: %d\n",
+             ret);
+      return ret;
+    }
+#endif
+
+#ifdef CONFIG_ESP_HOSTED_SDIO_BUS_WIDTH_4BIT
+  SDIO_CLOCK(priv->dev, CLOCK_SD_TRANSFER_4BIT);
+#else
+  SDIO_CLOCK(priv->dev, CLOCK_SD_TRANSFER_1BIT);
+#endif
+
+  syslog(LOG_INFO, "ESP-Hosted: SDIO transfer clock set to %u kHz, "
+                   "%u-bit bus\n",
+         CONFIG_ESP_HOSTED_SDIO_FREQ_KHZ,
+#ifdef CONFIG_ESP_HOSTED_SDIO_BUS_WIDTH_4BIT
+         4u
+#else
+         1u
+#endif
+         );
+
+  priv->probed = true;
+  syslog(LOG_INFO,
+         "ESP-Hosted: ESP32-C6 SDIO function detected on SDMMC slot %d\n",
+         CONFIG_ESP_HOSTED_SDIO_SLOT);
+  return OK;
 }
 
-/****************************************************************************
- * Name: hosted_sdio_card_deinit
- *
- * Description:
- *   Deinitialize SDIO card.
- *
- ****************************************************************************/
+void *hosted_sdio_init(void)
+{
+  struct sdio_dev_s *dev;
+
+  if (g_sdio.dev != NULL)
+    {
+      return &g_sdio;
+    }
+
+  /* Configure the host and put pull-ups on the SDIO pins before releasing
+   * the ESP32-C6 from reset.  Apart from keeping the bus at valid idle
+   * levels while the slave boots, this intentionally places the 1.5 second
+   * C6 boot interval between SDMMC initialization and the first command.
+   */
+
+  dev = sdio_initialize(CONFIG_ESP_HOSTED_SDIO_SLOT);
+  if (dev == NULL)
+    {
+      syslog(LOG_ERR, "ESP-Hosted: SDMMC slot %d initialization failed\n",
+             CONFIG_ESP_HOSTED_SDIO_SLOT);
+      return NULL;
+    }
+
+  g_sdio.dev = dev;
+  nxmutex_init(&g_sdio.lock);
+  return &g_sdio;
+}
+
+int hosted_sdio_deinit(void *ctx)
+{
+  struct hosted_sdio_context_s *priv = ctx;
+
+  if (priv == NULL)
+    {
+      return -EINVAL;
+    }
+
+  nxmutex_destroy(&priv->lock);
+  priv->dev = NULL;
+  priv->attached = false;
+  priv->probed = false;
+  return OK;
+}
 
 int hosted_sdio_card_deinit(void *ctx)
 {
-    /* Nothing specific to deinit for SDIO */
+  struct hosted_sdio_context_s *priv = ctx;
 
-    return 0;
+  if (priv == NULL)
+    {
+      return -EINVAL;
+    }
+
+  priv->probed = false;
+  return OK;
 }
 
-/****************************************************************************
- * Name: hosted_sdio_read_reg
- *
- * Description:
- *   Read SDIO register.
- *
- ****************************************************************************/
+int esp_hosted_sdio_probe(void)
+{
+  void *ctx = hosted_sdio_init();
+  int ret;
+
+  if (ctx == NULL)
+    {
+      return -ENODEV;
+    }
+
+  ret = hosted_sdio_reset_slave();
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  return hosted_sdio_card_init(ctx, true);
+}
 
 int hosted_sdio_read_reg(void *ctx, uint32_t reg, uint8_t *data,
                          uint16_t size, bool lock_required)
 {
-    struct hosted_sdio_context *context = (struct hosted_sdio_context *)ctx;
-    struct sdio_dev_s *dev;
-    int ret;
+  struct hosted_sdio_context_s *priv = ctx;
+  uint16_t i;
+  int ret = OK;
 
-    if (!context || !context->sdio_dev || !data) {
-        return -EINVAL;
+  if (priv == NULL || priv->dev == NULL || data == NULL)
+    {
+      return -EINVAL;
     }
 
-    dev = context->sdio_dev;
-
-    if (lock_required) {
-        nxmutex_lock(&context->lock);
+  if (lock_required)
+    {
+      ret = nxmutex_lock(&priv->lock);
+      if (ret < 0)
+        {
+          return ret;
+        }
     }
 
-    ret = SDIO_READFUNC(dev, SDIO_FUNC_1, reg, data, size);
+  /* ESP-Hosted exposes the SLC registers through a 1 KiB SDIO function-1
+   * window.  The transport core passes the native ESP peripheral addresses,
+   * so translate them before issuing CMD52.
+   */
 
-    if (lock_required) {
-        nxmutex_unlock(&context->lock);
+  reg &= ESP_HOSTED_SDIO_REG_MASK;
+  for (i = 0; i < size; i++)
+    {
+      ret = hosted_sdio_readb(priv->dev, SDIO_FUNC_1, reg + i, &data[i]);
+      if (ret < 0)
+        {
+          break;
+        }
     }
 
-    return ret;
+  if (lock_required)
+    {
+      nxmutex_unlock(&priv->lock);
+    }
+
+  return ret;
 }
-
-/****************************************************************************
- * Name: hosted_sdio_write_reg
- *
- * Description:
- *   Write SDIO register.
- *
- ****************************************************************************/
 
 int hosted_sdio_write_reg(void *ctx, uint32_t reg, uint8_t *data,
                           uint16_t size, bool lock_required)
 {
-    struct hosted_sdio_context *context = (struct hosted_sdio_context *)ctx;
-    struct sdio_dev_s *dev;
-    int ret;
+  struct hosted_sdio_context_s *priv = ctx;
+  uint16_t i;
+  int ret = OK;
 
-    if (!context || !context->sdio_dev || !data) {
-        return -EINVAL;
+  if (priv == NULL || priv->dev == NULL || data == NULL)
+    {
+      return -EINVAL;
     }
 
-    dev = context->sdio_dev;
-
-    if (lock_required) {
-        nxmutex_lock(&context->lock);
+  if (lock_required)
+    {
+      ret = nxmutex_lock(&priv->lock);
+      if (ret < 0)
+        {
+          return ret;
+        }
     }
 
-    ret = SDIO_WRITEFUNC(dev, SDIO_FUNC_1, reg, data, size);
-
-    if (lock_required) {
-        nxmutex_unlock(&context->lock);
+  reg &= ESP_HOSTED_SDIO_REG_MASK;
+  for (i = 0; i < size; i++)
+    {
+      ret = hosted_sdio_writeb(priv->dev, SDIO_FUNC_1, reg + i, data[i]);
+      if (ret < 0)
+        {
+          break;
+        }
     }
 
-    return ret;
+  if (lock_required)
+    {
+      nxmutex_unlock(&priv->lock);
+    }
+
+  return ret;
 }
 
-/****************************************************************************
- * Name: hosted_sdio_read_block
- *
- * Description:
- *   Read SDIO block.
- *
- ****************************************************************************/
+static int hosted_sdio_transfer(void *ctx, bool write, uint32_t reg,
+                                uint8_t *data, uint16_t size,
+                                bool lock_required)
+{
+  struct hosted_sdio_context_s *priv = ctx;
+  unsigned int transfer_blocks;
+  unsigned int transfer_size;
+  unsigned int blocks;
+  unsigned int remainder;
+  uint32_t address;
+  uint8_t *buffer;
+  int ret = OK;
+
+  if (priv == NULL || priv->dev == NULL || data == NULL || size == 0)
+    {
+      return -EINVAL;
+    }
+
+  if (lock_required)
+    {
+      ret = nxmutex_lock(&priv->lock);
+      if (ret < 0)
+        {
+          return ret;
+        }
+    }
+
+  blocks = size / ESP_HOSTED_SDIO_BLOCK_SIZE;
+  remainder = size % ESP_HOSTED_SDIO_BLOCK_SIZE;
+  address = reg;
+  buffer = data;
+
+  while (blocks != 0)
+    {
+      transfer_blocks = blocks > ESP_HOSTED_SDIO_BLOCKS_PER_TRANSFER ?
+                        ESP_HOSTED_SDIO_BLOCKS_PER_TRANSFER : blocks;
+      transfer_size = transfer_blocks * ESP_HOSTED_SDIO_BLOCK_SIZE;
+      ret = sdio_io_rw_extended(priv->dev, write, SDIO_FUNC_1, address,
+                                true, buffer, ESP_HOSTED_SDIO_BLOCK_SIZE,
+                                transfer_blocks);
+      if (ret < 0)
+        {
+          break;
+        }
+
+      blocks -= transfer_blocks;
+      address += transfer_size;
+      buffer += transfer_size;
+    }
+
+  if (ret >= 0 && remainder != 0)
+    {
+      ret = sdio_io_rw_extended(priv->dev, write, SDIO_FUNC_1, address,
+                                true, buffer, remainder, 0);
+    }
+
+  if (lock_required)
+    {
+      nxmutex_unlock(&priv->lock);
+    }
+
+  return ret;
+}
 
 int hosted_sdio_read_block(void *ctx, uint32_t reg, uint8_t *data,
                            uint16_t size, bool lock_required)
 {
-    struct hosted_sdio_context *context = (struct hosted_sdio_context *)ctx;
-    struct sdio_dev_s *dev;
-    int ret;
-
-    if (!context || !context->sdio_dev || !data) {
-        return -EINVAL;
-    }
-
-    dev = context->sdio_dev;
-
-    if (lock_required) {
-        nxmutex_lock(&context->lock);
-    }
-
-    /* Use block mode transfer */
-
-    uint16_t blocks = size / SDIO_BLOCK_SIZE;
-    uint16_t remainder = size % SDIO_BLOCK_SIZE;
-
-    if (blocks > 0) {
-        ret = SDIO_READBLOCK(dev, reg, data, blocks);
-        if (ret < 0) {
-            goto errout;
-        }
-    }
-
-    if (remainder > 0) {
-        /* Read remainder using byte mode */
-
-        ret = SDIO_READFUNC(dev, SDIO_FUNC_1,
-                            reg + blocks * SDIO_BLOCK_SIZE,
-                            data + blocks * SDIO_BLOCK_SIZE,
-                            remainder);
-        if (ret < 0) {
-            goto errout;
-        }
-    }
-
-    ret = 0;
-
-errout:
-    if (lock_required) {
-        nxmutex_unlock(&context->lock);
-    }
-
-    return ret;
+  return hosted_sdio_transfer(ctx, false, reg, data, size, lock_required);
 }
-
-/****************************************************************************
- * Name: hosted_sdio_write_block
- *
- * Description:
- *   Write SDIO block.
- *
- ****************************************************************************/
 
 int hosted_sdio_write_block(void *ctx, uint32_t reg, uint8_t *data,
                             uint16_t size, bool lock_required)
 {
-    struct hosted_sdio_context *context = (struct hosted_sdio_context *)ctx;
-    struct sdio_dev_s *dev;
-    int ret;
-
-    if (!context || !context->sdio_dev || !data) {
-        return -EINVAL;
-    }
-
-    dev = context->sdio_dev;
-
-    if (lock_required) {
-        nxmutex_lock(&context->lock);
-    }
-
-    /* Use block mode transfer */
-
-    uint16_t blocks = size / SDIO_BLOCK_SIZE;
-    uint16_t remainder = size % SDIO_BLOCK_SIZE;
-
-    if (blocks > 0) {
-        ret = SDIO_WRITEBLOCK(dev, reg, data, blocks);
-        if (ret < 0) {
-            goto errout;
-        }
-    }
-
-    if (remainder > 0) {
-        /* Write remainder using byte mode */
-
-        ret = SDIO_WRITEFUNC(dev, SDIO_FUNC_1,
-                             reg + blocks * SDIO_BLOCK_SIZE,
-                             data + blocks * SDIO_BLOCK_SIZE,
-                             remainder);
-        if (ret < 0) {
-            goto errout;
-        }
-    }
-
-    ret = 0;
-
-errout:
-    if (lock_required) {
-        nxmutex_unlock(&context->lock);
-    }
-
-    return ret;
+  return hosted_sdio_transfer(ctx, true, reg, data, size, lock_required);
 }
-
-/****************************************************************************
- * Name: hosted_sdio_wait_slave_intr
- *
- * Description:
- *   Wait for slave interrupt.
- *
- ****************************************************************************/
 
 int hosted_sdio_wait_slave_intr(void *ctx, uint32_t ticks_to_wait)
 {
-    struct hosted_sdio_context *context = (struct hosted_sdio_context *)ctx;
-    struct sdio_dev_s *dev;
+  struct hosted_sdio_context_s *priv = ctx;
+  int ret;
 
-    if (!context || !context->sdio_dev) {
-        return -EINVAL;
+  if (priv == NULL || priv->dev == NULL)
+    {
+      return -EINVAL;
     }
 
-    dev = context->sdio_dev;
+  /* Match ESP-IDF's sdmmc_io_wait_int(): the normal RX path passes
+   * HOSTED_BLOCK_MAX and sleeps until the slave asserts DAT1.  Do not use a
+   * periodic timeout as a reason to poll SDIO registers.
+   */
 
-    /* Wait for SDIO interrupt from slave */
+  ret = esp32p4_sdio_wait_card_interrupt(priv->dev, ticks_to_wait);
 
-    return SDIO_WAITINT(dev, ticks_to_wait);
-}
-
-/****************************************************************************
- * Name: hosted_sdio_init
- *
- * Description:
- *   Initialize SDIO transport and register OSI functions.
- *
- ****************************************************************************/
-
-int hosted_sdio_init(void)
-{
-    struct sdio_dev_s *sdio_dev;
-
-    /* Allocate SDIO context */
-
-    g_sdio_ctx = (struct hosted_sdio_context *)kumm_malloc(
-                     sizeof(struct hosted_sdio_context));
-    if (!g_sdio_ctx) {
-        return -ENOMEM;
-    }
-
-    memset(g_sdio_ctx, 0, sizeof(struct hosted_sdio_context));
-
-    /* Initialize SDIO device */
-
-    sdio_dev = sdio_initialize(CONFIG_ESP_HOSTED_SDIO_SLOT);
-    if (!sdio_dev) {
-        wlerr("ERROR: Failed to initialize SDIO slot %d\n",
-              CONFIG_ESP_HOSTED_SDIO_SLOT);
-        kumm_free(g_sdio_ctx);
-        g_sdio_ctx = NULL;
-        return -ENODEV;
-    }
-
-    g_sdio_ctx->sdio_dev = sdio_dev;
-    g_sdio_ctx->clock_freq_khz = CONFIG_ESP_HOSTED_SDIO_FREQ_KHZ;
-    g_sdio_ctx->bus_width = CONFIG_ESP_HOSTED_SDIO_BUS_WIDTH_4BIT ? 4 : 1;
-    g_sdio_ctx->slot = CONFIG_ESP_HOSTED_SDIO_SLOT;
-
-    nxmutex_init(&g_sdio_ctx->lock);
-
-    /* Register SDIO functions in OSI */
-
-    g_h.funcs->_h_sdio_card_init = hosted_sdio_card_init;
-    g_h.funcs->_h_sdio_card_deinit = hosted_sdio_card_deinit;
-    g_h.funcs->_h_sdio_read_reg = hosted_sdio_read_reg;
-    g_h.funcs->_h_sdio_write_reg = hosted_sdio_write_reg;
-    g_h.funcs->_h_sdio_read_block = hosted_sdio_read_block;
-    g_h.funcs->_h_sdio_write_block = hosted_sdio_write_block;
-    g_h.funcs->_h_sdio_wait_slave_intr = hosted_sdio_wait_slave_intr;
-
-    /* Set bus init/deinit */
-
-    g_h.funcs->_h_bus_init = hosted_sdio_bus_init;
-    g_h.funcs->_h_bus_deinit = hosted_sdio_bus_deinit;
-
-    wlinfo("SDIO transport initialized\n");
-    return 0;
-}
-
-/****************************************************************************
- * Name: hosted_sdio_bus_init
- *
- * Description:
- *   Initialize SDIO bus (called by esp_hosted_init).
- *
- ****************************************************************************/
-
-void *hosted_sdio_bus_init(void)
-{
-    int ret;
-
-    if (!g_sdio_ctx) {
-        ret = hosted_sdio_init();
-        if (ret < 0) {
-            return NULL;
-        }
-    }
-
-    /* Initialize card */
-
-    ret = hosted_sdio_card_init(g_sdio_ctx, true);
-    if (ret < 0) {
-        wlerr("ERROR: SDIO card init failed: %d\n", ret);
-        return NULL;
-    }
-
-    return g_sdio_ctx;
-}
-
-/****************************************************************************
- * Name: hosted_sdio_bus_deinit
- *
- * Description:
- *   Deinitialize SDIO bus.
- *
- ****************************************************************************/
-
-int hosted_sdio_bus_deinit(void *ctx)
-{
-    struct hosted_sdio_context *context = (struct hosted_sdio_context *)ctx;
-
-    if (context) {
-        hosted_sdio_card_deinit(context);
-        nxmutex_destroy(&context->lock);
-        kumm_free(context);
-        g_sdio_ctx = NULL;
-    }
-
-    return 0;
+  return ret;
 }

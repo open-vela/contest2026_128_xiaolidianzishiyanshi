@@ -31,7 +31,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include <esp_event.h>
 
 /****************************************************************************
  * Pre-processor Definitions
@@ -71,5 +70,6 @@
  ****************************************************************************/
 
 int esp_hosted_port_init(void);
+int esp_hosted_port_start(void);
 
 #endif /* __ESP_HOSTED_PORT_H__ */

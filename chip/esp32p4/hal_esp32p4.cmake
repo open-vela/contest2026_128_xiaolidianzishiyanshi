@@ -186,6 +186,23 @@ else()
        ${ESP_HAL_3RDPARTY_REPO}/components/soc/${CHIP_SERIES}/register/hw_ver3)
 endif()
 
+# The applications mbedTLS package exports its include directories through the
+# global NuttX include list.  When CONFIG_CRYPTO_MBEDTLS is enabled those paths
+# otherwise precede the ESP-IDF headers above, causing ESP HAL sources to mix
+# the applications mbedTLS headers with Espressif's configuration and port.
+# Keep the two implementations isolated by making the ESP-IDF mbedTLS/PSA
+# include chain take precedence for the arch target only.
+set(ESP32P4_MBEDTLS_INCLUDES
+    ${ESP_HAL_3RDPARTY_REPO}/components/mbedtls/port/include
+    ${ESP_HAL_3RDPARTY_REPO}/components/mbedtls/mbedtls/tf-psa-crypto/drivers/builtin/include
+    ${ESP_HAL_3RDPARTY_REPO}/components/mbedtls/mbedtls/tf-psa-crypto/drivers/builtin/src
+    ${ESP_HAL_3RDPARTY_REPO}/components/mbedtls/port/include/aes
+    ${ESP_HAL_3RDPARTY_REPO}/components/mbedtls/port/psa_driver/include
+    ${ESP_HAL_3RDPARTY_REPO}/components/mbedtls/mbedtls/include
+    ${ESP_HAL_3RDPARTY_REPO}/components/mbedtls/mbedtls/library
+    ${ESP_HAL_3RDPARTY_REPO}/nuttx/include/mbedtls)
+
+target_include_directories(arch BEFORE PRIVATE ${ESP32P4_MBEDTLS_INCLUDES})
 target_include_directories(arch PRIVATE ${ESP32P4_INCLUDES})
 
 # ##############################################################################

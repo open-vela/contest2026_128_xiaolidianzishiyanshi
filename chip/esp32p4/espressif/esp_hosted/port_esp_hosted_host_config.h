@@ -18,6 +18,12 @@
 #include <nuttx/config.h>
 #include "esp_netif.h"
 
+/* Compatibility names used directly by the upstream transport sources. */
+
+#ifndef CONFIG_ESP_HOSTED_DFLT_TASK_STACK
+#  define CONFIG_ESP_HOSTED_DFLT_TASK_STACK CONFIG_ESP_HOSTED_TASK_STACK_SIZE
+#endif
+
 /****************************************************************************
  * Transport Type Constants
  ****************************************************************************/
@@ -84,6 +90,10 @@ enum
 #  define H_SLAVE_TARGET_ESP32C2 1
 #endif
 #ifdef CONFIG_ESP_HOSTED_CP_TARGET_ESP32C6
+#  define H_SLAVE_TARGET_ESP32C6 1
+#endif
+
+#ifndef H_SLAVE_TARGET_ESP32C6
 #  define H_SLAVE_TARGET_ESP32C6 1
 #endif
 #ifdef CONFIG_ESP_HOSTED_CP_TARGET_ESP32C5
@@ -156,7 +166,13 @@ enum
 #  define H_SDIO_ALWAYS_HOST_RX_MAX_TRANSPORT_SIZE 2
 #  define H_SDIO_OPTIMIZATION_RX_NONE 3
 
-#  define H_SDIO_HOST_RX_MODE H_SDIO_OPTIMIZATION_RX_NONE
+#  ifdef CONFIG_ESP_HOSTED_SDIO_OPTIMIZATION_RX_STREAMING_MODE
+#    define H_SDIO_HOST_RX_MODE H_SDIO_HOST_STREAMING_MODE
+#  elif defined(CONFIG_ESP_HOSTED_SDIO_OPTIMIZATION_RX_MAX_SIZE)
+#    define H_SDIO_HOST_RX_MODE H_SDIO_ALWAYS_HOST_RX_MAX_TRANSPORT_SIZE
+#  else
+#    define H_SDIO_HOST_RX_MODE H_SDIO_OPTIMIZATION_RX_NONE
+#  endif
 
 #  define H_SDIO_TX_LEN_TO_TRANSFER(x) (((x) + 3) & (~3))
 #  define H_SDIO_RX_LEN_TO_TRANSFER(x) (((x) + 3) & (~3))
@@ -519,8 +535,6 @@ enum
 #  ifdef CONFIG_ESP_HOSTED_MAX_CUSTOM_MSG_HANDLERS
 #    define H_MAX_CUSTOM_MSG_HANDLERS  CONFIG_ESP_HOSTED_MAX_CUSTOM_MSG_HANDLERS
 #  endif
-#else
-#  define H_PEER_DATA_TRANSFER 0
 #endif
 
 /****************************************************************************

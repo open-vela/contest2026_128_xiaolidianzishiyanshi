@@ -32,6 +32,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include <syslog.h>
 
 #include <nuttx/arch.h>
 #include <nuttx/clock.h>
@@ -67,6 +68,8 @@
 
 #define ESP32P4_SDMMC_NSLOTS          2
 #define ESP32P4_SDMMC_SRC_FREQ        160000000u
+#define ESP32P4_SDMMC_DEFAULT_FREQ    20000000u
+#define ESP32P4_SDMMC_HIGHSPEED_FREQ  40000000u
 #define ESP32P4_SDMMC_CACHE_ALIGN     64u
 #define ESP32P4_SDMMC_MAX_BLOCKS      128u
 #define ESP32P4_SDMMC_MAX_XFR         (ESP32P4_SDMMC_MAX_BLOCKS * 512u)
@@ -322,7 +325,15 @@ static void esp32p4_eventtimeout(wdparm_t arg)
 
   if ((priv->waitevents & SDIOWAIT_TIMEOUT) != 0)
     {
-      esp32p4_endwait(priv, SDIOWAIT_TIMEOUT);
+      if (priv->remaining != 0)
+        {
+          esp32p4_endtransfer(priv, SDIOWAIT_TRANSFERDONE |
+                                   SDIOWAIT_TIMEOUT);
+        }
+      else
+        {
+          esp32p4_endwait(priv, SDIOWAIT_TIMEOUT);
+        }
     }
 }
 
@@ -710,7 +721,7 @@ static void esp32p4_widebus(struct sdio_dev_s *dev, bool wide)
 
   /* A card samples DAT3 while CMD0 is sent to choose between native SD and
    * SPI mode.  Keep slot 0 DAT3 high as a GPIO throughout identification;
-   * only connect it to the SDMMC peripheral after ACMD6 selects 4-bit mode.
+   * only connect it after the card-side bus width has changed to 4-bit mode.
    */
 
   if (priv->slot == 0 && !wide)
@@ -738,6 +749,7 @@ static void esp32p4_widebus(struct sdio_dev_s *dev, bool wide)
 static void esp32p4_clock(struct sdio_dev_s *dev, enum sdio_clock_e rate)
 {
   struct esp32p4_dev_s *priv = (struct esp32p4_dev_s *)dev;
+  uint32_t denominator;
   uint32_t freq;
   uint32_t hostdiv;
   uint32_t carddiv;
@@ -757,13 +769,36 @@ static void esp32p4_clock(struct sdio_dev_s *dev, enum sdio_clock_e rate)
         freq = 40000000;
         break;
       case CLOCK_SD_TRANSFER_4BIT:
-        freq = 20000000;
+        freq = ESP32P4_SDMMC_DEFAULT_FREQ;
+#if defined(CONFIG_ESP_HOSTED_SDIO) && \
+    defined(CONFIG_ESP_HOSTED_SDIO_FREQ_KHZ)
+        if (priv->slot == CONFIG_ESP_HOSTED_SDIO_SLOT)
+          {
+            freq = CONFIG_ESP_HOSTED_SDIO_FREQ_KHZ * 1000u;
+          }
+#endif
         esp32p4_widebus(dev, true);
         break;
       case CLOCK_SD_TRANSFER_1BIT:
-        freq = 20000000;
+        freq = ESP32P4_SDMMC_DEFAULT_FREQ;
+#if defined(CONFIG_ESP_HOSTED_SDIO) && \
+    defined(CONFIG_ESP_HOSTED_SDIO_FREQ_KHZ)
+        if (priv->slot == CONFIG_ESP_HOSTED_SDIO_SLOT)
+          {
+            freq = CONFIG_ESP_HOSTED_SDIO_FREQ_KHZ * 1000u;
+          }
+#endif
         esp32p4_widebus(dev, false);
         break;
+    }
+
+  /* The ESP32-C6 SDIO slave supports the standard 40 MHz high-speed mode.
+   * Do not let a custom configuration overclock either side of the link.
+   */
+
+  if (freq > ESP32P4_SDMMC_HIGHSPEED_FREQ)
+    {
+      freq = ESP32P4_SDMMC_HIGHSPEED_FREQ;
     }
 
   sdmmc_ll_enable_card_clock(g_sdmmchost.hw, priv->slot, false);
@@ -778,8 +813,27 @@ static void esp32p4_clock(struct sdio_dev_s *dev, enum sdio_clock_e rate)
    * dividers.  This lets slots 0 and 1 retain different bus frequencies.
    */
 
-  hostdiv = 2;
-  carddiv = (ESP32P4_SDMMC_SRC_FREQ / hostdiv) / (2 * freq);
+  if (freq == 400000)
+    {
+      /* Match ESP-IDF's probing clock: 160 MHz / 10 / (2 * 20).
+       * Besides producing 400 kHz on CCLK, this keeps the controller's
+       * internal host clock at the value used by the validated P4 driver.
+       */
+
+      hostdiv = 10;
+      carddiv = 20;
+    }
+  else
+    {
+      hostdiv = 2;
+      denominator = 2 * freq;
+      carddiv = ((ESP32P4_SDMMC_SRC_FREQ / hostdiv) +
+                 denominator - 1) / denominator;
+      if (carddiv == 0)
+        {
+          carddiv = 1;
+        }
+    }
 
   PERIPH_RCC_ATOMIC()
     {
@@ -1097,6 +1151,14 @@ static int esp32p4_waitresponse(struct sdio_dev_s *dev, uint32_t cmd)
   ret = nxsem_tickwait_uninterruptible(&priv->cmdsem, timeout);
   if (ret < 0)
     {
+      syslog(LOG_ERR,
+             "SDMMC: slot %d CMD%lu semaphore wait failed: %d "
+             "status=%08lx raw=%08lx\n",
+             priv->slot,
+             (unsigned long)((cmd & MMCSD_CMDIDX_MASK) >>
+                             MMCSD_CMDIDX_SHIFT),
+             ret, (unsigned long)priv->cmdstatus,
+             (unsigned long)sdmmc_ll_get_interrupt_raw(g_sdmmchost.hw));
       mcerr("ERROR: slot %d command wait failed: %d\n", priv->slot, ret);
       return ret == -ETIMEDOUT ? ret : -EIO;
     }
@@ -1104,12 +1166,27 @@ static int esp32p4_waitresponse(struct sdio_dev_s *dev, uint32_t cmd)
   if ((priv->cmdstatus & (SDMMC_LL_EVENT_RTO |
                           SDMMC_LL_EVENT_HLE)) != 0)
     {
+      syslog(LOG_ERR,
+             "SDMMC: slot %d CMD%lu timed out: status=%08lx raw=%08lx\n",
+             priv->slot,
+             (unsigned long)((cmd & MMCSD_CMDIDX_MASK) >>
+                             MMCSD_CMDIDX_SHIFT),
+             (unsigned long)priv->cmdstatus,
+             (unsigned long)sdmmc_ll_get_interrupt_raw(g_sdmmchost.hw));
       return -ETIMEDOUT;
     }
 
   if ((priv->cmdstatus & (SDMMC_LL_EVENT_RESP_ERR |
                           SDMMC_LL_EVENT_RCRC)) != 0)
     {
+      syslog(LOG_ERR,
+             "SDMMC: slot %d CMD%lu response error: "
+             "status=%08lx raw=%08lx\n",
+             priv->slot,
+             (unsigned long)((cmd & MMCSD_CMDIDX_MASK) >>
+                             MMCSD_CMDIDX_SHIFT),
+             (unsigned long)priv->cmdstatus,
+             (unsigned long)sdmmc_ll_get_interrupt_raw(g_sdmmchost.hw));
       return -EIO;
     }
 
@@ -1357,6 +1434,51 @@ static void esp32p4_configure_slot0(void)
                    SDMMC_LL_IOMUX_FUNC);
 }
 
+#ifdef CONFIG_ESP32P4_SDMMC_SLOT1
+static void esp32p4_configure_slot1(void)
+{
+  esp_configgpio(CONFIG_ESP32P4_SDMMC_SLOT1_PIN_CLK,
+                 OUTPUT_FUNCTION_1);
+  esp_gpio_matrix_out(CONFIG_ESP32P4_SDMMC_SLOT1_PIN_CLK,
+                      SD_CARD_CCLK_2_PAD_OUT_IDX, false, false);
+
+  esp_configgpio(CONFIG_ESP32P4_SDMMC_SLOT1_PIN_CMD,
+                 OUTPUT_FUNCTION_1 | INPUT_FUNCTION_1 | PULLUP);
+  esp_gpio_matrix_out(CONFIG_ESP32P4_SDMMC_SLOT1_PIN_CMD,
+                      SD_CARD_CCMD_2_PAD_OUT_IDX, false, false);
+  esp_gpio_matrix_in(CONFIG_ESP32P4_SDMMC_SLOT1_PIN_CMD,
+                     SD_CARD_CCMD_2_PAD_IN_IDX, false);
+
+  esp_configgpio(CONFIG_ESP32P4_SDMMC_SLOT1_PIN_D0,
+                 OUTPUT_FUNCTION_1 | INPUT_FUNCTION_1 | PULLUP);
+  esp_gpio_matrix_out(CONFIG_ESP32P4_SDMMC_SLOT1_PIN_D0,
+                      SD_CARD_CDATA0_2_PAD_OUT_IDX, false, false);
+  esp_gpio_matrix_in(CONFIG_ESP32P4_SDMMC_SLOT1_PIN_D0,
+                     SD_CARD_CDATA0_2_PAD_IN_IDX, false);
+
+  esp_configgpio(CONFIG_ESP32P4_SDMMC_SLOT1_PIN_D1,
+                 OUTPUT_FUNCTION_1 | INPUT_FUNCTION_1 | PULLUP);
+  esp_gpio_matrix_out(CONFIG_ESP32P4_SDMMC_SLOT1_PIN_D1,
+                      SD_CARD_CDATA1_2_PAD_OUT_IDX, false, false);
+  esp_gpio_matrix_in(CONFIG_ESP32P4_SDMMC_SLOT1_PIN_D1,
+                     SD_CARD_CDATA1_2_PAD_IN_IDX, false);
+
+  esp_configgpio(CONFIG_ESP32P4_SDMMC_SLOT1_PIN_D2,
+                 OUTPUT_FUNCTION_1 | INPUT_FUNCTION_1 | PULLUP);
+  esp_gpio_matrix_out(CONFIG_ESP32P4_SDMMC_SLOT1_PIN_D2,
+                      SD_CARD_CDATA2_2_PAD_OUT_IDX, false, false);
+  esp_gpio_matrix_in(CONFIG_ESP32P4_SDMMC_SLOT1_PIN_D2,
+                     SD_CARD_CDATA2_2_PAD_IN_IDX, false);
+
+  esp_configgpio(CONFIG_ESP32P4_SDMMC_SLOT1_PIN_D3,
+                 OUTPUT_FUNCTION_1 | INPUT_FUNCTION_1 | PULLUP);
+  esp_gpio_matrix_out(CONFIG_ESP32P4_SDMMC_SLOT1_PIN_D3,
+                      SD_CARD_CDATA3_2_PAD_OUT_IDX, false, false);
+  esp_gpio_matrix_in(CONFIG_ESP32P4_SDMMC_SLOT1_PIN_D3,
+                     SD_CARD_CDATA3_2_PAD_IN_IDX, false);
+}
+#endif
+
 /****************************************************************************
  * Public Functions
  ****************************************************************************/
@@ -1478,6 +1600,12 @@ struct sdio_dev_s *sdio_initialize(int slotno)
     {
       esp32p4_configure_slot0();
     }
+#ifdef CONFIG_ESP32P4_SDMMC_SLOT1
+  else
+    {
+      esp32p4_configure_slot1();
+    }
+#endif
 
   esp32p4_reset(&priv->dev);
   if (!g_sdmmchost.resetok)

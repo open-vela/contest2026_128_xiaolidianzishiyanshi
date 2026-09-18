@@ -1,64 +1,31 @@
 /****************************************************************************
- * arch/risc-v/src/common/espressif/esp_hosted/port_esp_hosted_host_sdio.h
+ * arch/risc-v/src/common/espressif/esp_hosted/
+ * port_esp_hosted_host_sdio.h
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * NuttX port SDIO interface for ESP-Hosted.
- *
  ****************************************************************************/
 
-#ifndef __PORT_ESP_HOSTED_HOST_SDIO_H_
-#define __PORT_ESP_HOSTED_HOST_SDIO_H_
-
-/****************************************************************************
- * Included Files
- ****************************************************************************/
+#ifndef __ARCH_RISCV_SRC_COMMON_ESPRESSIF_ESP_HOSTED_SDIO_H
+#define __ARCH_RISCV_SRC_COMMON_ESPRESSIF_ESP_HOSTED_SDIO_H
 
 #include <nuttx/config.h>
-#include <stdint.h>
+
 #include <stdbool.h>
+#include <stdint.h>
 
-#include <transport_drv.h>
-
-/****************************************************************************
- * Pre-processor Definitions
- ****************************************************************************/
-
-#define ESP_BLOCK_SIZE  512
+#define ESP_HOSTED_SDIO_BLOCK_SIZE 512
+#define ESP_HOSTED_SDIO_UNRESPONSIVE_CODE 0x107
 
 #ifndef MAX_TRANSPORT_BUFFER_SIZE
-#define MAX_TRANSPORT_BUFFER_SIZE  MAX_SDIO_BUFFER_SIZE
+#  define MAX_TRANSPORT_BUFFER_SIZE MAX_SDIO_BUFFER_SIZE
 #endif
 
-#define ESP_HOSTED_SDIO_UNRESPONSIVE_CODE  0x107
-
-/****************************************************************************
- * Public Function Prototypes
- ****************************************************************************/
-
-/* Hosted init function to init the SDIO host
- * returns a pointer to the sdio context */
+int esp_hosted_sdio_probe(void);
 
 void *hosted_sdio_init(void);
-
-/* Hosted SDIO deinit function
- * expects a pointer to the sdio context */
-
 int hosted_sdio_deinit(void *ctx);
-
-/* Hosted SDIO to initialise the SDIO card */
-
 int hosted_sdio_card_init(void *ctx, bool show_config);
-
-/* Hosted SDIO to deinitialise the SDIO card */
-
 int hosted_sdio_card_deinit(void *ctx);
-
-/* Hosted SDIO functions to read / write to slave scratch registers
- * and to read / write block data
- * If lock_required is true, call will hold a mutex for the duration
- * of the call */
-
 int hosted_sdio_read_reg(void *ctx, uint32_t reg, uint8_t *data,
                          uint16_t size, bool lock_required);
 int hosted_sdio_write_reg(void *ctx, uint32_t reg, uint8_t *data,
@@ -67,10 +34,6 @@ int hosted_sdio_read_block(void *ctx, uint32_t reg, uint8_t *data,
                            uint16_t size, bool lock_required);
 int hosted_sdio_write_block(void *ctx, uint32_t reg, uint8_t *data,
                             uint16_t size, bool lock_required);
-
-/* Hosted SDIO function that will block waiting for a SDIO interrupt
- * from the slave. Returns when there is an interrupt or timeout. */
-
 int hosted_sdio_wait_slave_intr(void *ctx, uint32_t ticks_to_wait);
 
-#endif /* __PORT_ESP_HOSTED_HOST_SDIO_H_ */
+#endif

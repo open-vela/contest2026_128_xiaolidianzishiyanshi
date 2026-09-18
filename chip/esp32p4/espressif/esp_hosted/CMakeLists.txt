@@ -2,33 +2,19 @@
 # arch/risc-v/src/common/espressif/esp_hosted/CMakeLists.txt
 #
 # SPDX-License-Identifier: Apache-2.0
-#
-# Licensed to the Apache Software Foundation (ASF) under one or more contributor
-# license agreements.  See the NOTICE file distributed with this work for
-# additional information regarding copyright ownership.  The ASF licenses this
-# file to you under the Apache License, Version 2.0 (the "License"); you may not
-# use this file except in compliance with the License.  You may obtain a copy of
-# the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
-# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  See the
-# License for the specific language governing permissions and limitations under
-# the License.
-#
 # ##############################################################################
 
 if(NOT CONFIG_ESP_HOSTED)
   return()
 endif()
 
-# ##############################################################################
-# Fetch esp-hosted-mcu source
-# ##############################################################################
+# Fetch only the portable ESP-Hosted sources.  The upstream ESP-IDF component
+# CMake file is intentionally not evaluated; esp_hosted.cmake below selects
+# the sources that use the NuttX OS and bus adaptation layers.
 
 set(ESP_HOSTED_REPO_NAME esp-hosted-mcu)
+set(ESP_HOSTED_REPO_DIR
+    "${CMAKE_BINARY_DIR}/arch/risc-v/src/common/espressif/${ESP_HOSTED_REPO_NAME}")
 
 if(DEFINED ENV{ESP_HOSTED_URL})
   set(ESP_HOSTED_URL $ENV{ESP_HOSTED_URL})
@@ -39,26 +25,16 @@ endif()
 if(DEFINED ENV{ESP_HOSTED_VERSION})
   set(ESP_HOSTED_VERSION $ENV{ESP_HOSTED_VERSION})
 else()
-  set(ESP_HOSTED_VERSION "main")
+  set(ESP_HOSTED_VERSION "4d9dc3857f9b720a43f553326dd029132b587b73")
 endif()
 
-set(ESP_HOSTED_REPO_DIR
-    "${CMAKE_BINARY_DIR}/arch/risc-v/src/common/espressif/${ESP_HOSTED_REPO_NAME}")
-
 if(NOT IS_DIRECTORY "${ESP_HOSTED_REPO_DIR}")
-  message(STATUS "Cloning esp-hosted-mcu from ${ESP_HOSTED_URL}")
   FetchContent_Declare(
     esp_hosted_mcu
     GIT_REPOSITORY ${ESP_HOSTED_URL}
-    GIT_TAG        ${ESP_HOSTED_VERSION}
-    SOURCE_DIR     ${ESP_HOSTED_REPO_DIR}
-  )
-
-  # Use FetchContent_Populate instead of FetchContent_MakeAvailable to avoid
-  # processing the upstream CMakeLists.txt, which calls ESP-IDF-specific
-  # functions (e.g. idf_component_register) that are not available in the
-  # NuttX build environment.  The port's own esp_hosted.cmake handles all
-  # compilation for NuttX.
+    GIT_TAG ${ESP_HOSTED_VERSION}
+    GIT_SUBMODULES ""
+    SOURCE_DIR ${ESP_HOSTED_REPO_DIR})
   FetchContent_GetProperties(esp_hosted_mcu)
   if(NOT esp_hosted_mcu_POPULATED)
     FetchContent_Populate(esp_hosted_mcu)
@@ -66,24 +42,53 @@ if(NOT IS_DIRECTORY "${ESP_HOSTED_REPO_DIR}")
 endif()
 
 set(ESP_HOSTED_ROOT ${ESP_HOSTED_REPO_DIR})
+set(ESP_HOSTED_PROTOBUF_ROOT ${NUTTX_DIR}/../external/protobuf-c/protobuf-c)
 
-# ##############################################################################
-# Include source file list
-# ##############################################################################
+# Keep the fetched ESP-Hosted checkout pristine.  Apply NuttX-specific fixes
+# to a build-directory copy so a clean configure reproduces the exact source
+# without depending on mutations left in FetchContent's checkout.
+
+set(ESP_HOSTED_SDIO_PATCH
+    "${CMAKE_CURRENT_LIST_DIR}/patches/0001-sdio-streaming-rx-backpressure.patch")
+set(ESP_HOSTED_PATCHED_ROOT "${CMAKE_CURRENT_BINARY_DIR}/patched")
+set(ESP_HOSTED_SDIO_PATCHED_SOURCE
+    "${ESP_HOSTED_PATCHED_ROOT}/host/drivers/transport/sdio/sdio_drv.c")
+
+file(MAKE_DIRECTORY
+     "${ESP_HOSTED_PATCHED_ROOT}/host/drivers/transport/sdio")
+configure_file(
+  "${ESP_HOSTED_ROOT}/host/drivers/transport/sdio/sdio_drv.c"
+  "${ESP_HOSTED_SDIO_PATCHED_SOURCE}"
+  COPYONLY)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             "${ESP_HOSTED_SDIO_PATCH}")
+
+find_package(Git REQUIRED QUIET)
+execute_process(
+  COMMAND "${GIT_EXECUTABLE}" apply --whitespace=nowarn
+          "${ESP_HOSTED_SDIO_PATCH}"
+  WORKING_DIRECTORY "${ESP_HOSTED_PATCHED_ROOT}"
+  RESULT_VARIABLE ESP_HOSTED_SDIO_PATCH_RESULT
+  ERROR_VARIABLE ESP_HOSTED_SDIO_PATCH_ERROR)
+if(NOT ESP_HOSTED_SDIO_PATCH_RESULT EQUAL 0)
+  message(FATAL_ERROR
+          "Failed to apply ESP-Hosted SDIO patch: ${ESP_HOSTED_SDIO_PATCH_ERROR}")
+endif()
 
 include(${CMAKE_CURRENT_LIST_DIR}/esp_hosted.cmake)
 
-# ##############################################################################
-# Compile definitions
-# ##############################################################################
-
 target_compile_definitions(arch PRIVATE
   ESP_HOSTED_NUTTX=1
-)
 
-# ##############################################################################
-# Include paths
-# ##############################################################################
+  # esp_hosted_os_abstraction.h conditionally changes the OS callback table
+  # layout with #ifdef H_USE_MEMPOOL.  Define it consistently for every
+  # translation unit even though the NuttX port uses the malloc fallback.
+
+  H_USE_MEMPOOL=0)
+if(CONFIG_ESP_HOSTED_SDIO)
+  target_compile_definitions(arch PRIVATE
+                             CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE=1)
+endif()
 
 target_include_directories(arch PRIVATE
   ${CMAKE_CURRENT_LIST_DIR}
@@ -109,8 +114,7 @@ target_include_directories(arch PRIVATE
   ${ESP_HOSTED_ROOT}/common/log
   ${ESP_HOSTED_ROOT}/common/rpc
   ${ESP_HOSTED_ROOT}/common/transport
-  ${ESP_HOSTED_ROOT}/common/protobuf-c
+  ${ESP_HOSTED_PROTOBUF_ROOT}
   ${ESP_HOSTED_ROOT}/common/proto
   ${ESP_HOSTED_ROOT}/common/mempool/include
-  ${ESP_HOSTED_ROOT}/common/utils
-)
+  ${ESP_HOSTED_ROOT}/common/utils)

@@ -21,6 +21,8 @@ choice ESP_HOSTED_TRANSPORT
 
 	config ESP_HOSTED_SDIO
 		bool "SDIO"
+		select ESP32P4_SDMMC
+		select ESP32P4_SDMMC_SLOT1
 		select MMCSD
 		select MMCSD_SDIO
 		select SDIO_DMA
@@ -100,6 +102,36 @@ config ESP_HOSTED_SDIO_BUS_WIDTH_4BIT
 	---help---
 		Use 4-bit bus width for higher throughput.
 
+choice ESP_HOSTED_SDIO_RX_OPTIMIZATION
+	prompt "SDIO receive mode"
+	default ESP_HOSTED_SDIO_OPTIMIZATION_RX_STREAMING_MODE
+	---help---
+		Select how data queued by the ESP-Hosted co-processor is read.
+		The host and co-processor must use matching packet/stream modes.
+
+config ESP_HOSTED_SDIO_OPTIMIZATION_RX_STREAMING_MODE
+	bool "Streaming mode"
+	---help---
+		Read all packets currently queued by the co-processor as one SDIO
+		stream and split them on the host.  This is the upstream default and
+		is required when the cumulative receive length exceeds one 1536-byte
+		transport packet.
+
+config ESP_HOSTED_SDIO_OPTIMIZATION_RX_MAX_SIZE
+	bool "Packet mode, always read maximum packet size"
+	---help---
+		Read one padded 1536-byte transport packet at a time.  Select this
+		only when streaming mode is disabled in the co-processor firmware.
+
+config ESP_HOSTED_SDIO_OPTIMIZATION_RX_NONE
+	bool "Packet mode, read reported packet size"
+	---help---
+		Read one transport packet using the length reported by the
+		co-processor.  Select this only when streaming mode is disabled in
+		the co-processor firmware.
+
+endchoice # ESP_HOSTED_SDIO_RX_OPTIMIZATION
+
 endif # ESP_HOSTED_SDIO
 
 # ---- UART 配置 ----
@@ -131,6 +163,19 @@ config ESP_HOSTED_USE_MEMPOOL
 	default y
 	---help---
 		Use memory pool for buffer allocation instead of malloc.
+
+config ESP_HOSTED_NETDEV
+	bool "Expose ESP-Hosted Wi-Fi as a NuttX network device"
+	default y
+	depends on NET && WIRELESS
+	select MM_IOB
+	select NET_ETHERNET
+	select DRIVERS_WIRELESS
+	select DRIVERS_IEEE80211
+	select NETDEV_WIRELESS_IOCTL
+	---help---
+		Register a wlan network device and bridge Ethernet frames and
+		wireless ioctls to the ESP-Hosted Wi-Fi RPC/data channels.
 
 config ESP_HOSTED_TASK_STACK_SIZE
 	int "ESP-Hosted task stack size"
