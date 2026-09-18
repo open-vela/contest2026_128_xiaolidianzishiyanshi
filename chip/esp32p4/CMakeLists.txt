@@ -24,7 +24,7 @@ add_subdirectory(espressif espressif)
 
 set(SRCS esp_chip_rev.c esp_clic.c esp_fpu.c)
 
-if(CONFIG_ESP32P4_SELECTS_REV_LESS_V3)
+if(CONFIG_ARCH_FPU)
   target_link_options(nuttx PRIVATE -Wl,--wrap=riscv_restorefpu)
 endif()
 

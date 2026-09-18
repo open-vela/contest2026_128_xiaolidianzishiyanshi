@@ -142,14 +142,14 @@ void __real_riscv_restorefpu(uintreg_t *regs, uintreg_t *fregs);
 
 void __wrap_riscv_restorefpu(uintreg_t *regs, uintreg_t *fregs)
 {
-#if defined(CONFIG_ARCH_FPU) && \
-    defined(CONFIG_ESP32P4_SELECTS_REV_LESS_V3)
+#ifdef CONFIG_ARCH_FPU
   uintreg_t status = regs[REG_INT_CTX] & MSTATUS_FS;
 
   /* The real riscv_restorefpu() loads registers for Clean/Dirty saved
    * contexts.  The task we are switching away from may have FS=Off, so
-   * enable the live FPU before those loads.  return_from_exception later
-   * installs the incoming task's saved FS state.
+   * enable the live FPU before those loads.  This context-switch ordering
+   * applies to every ESP32-P4 revision; only the illegal-instruction
+   * erratum handler below is restricted to pre-v3 silicon.
    */
 
   if (status > MSTATUS_FS_INIT)

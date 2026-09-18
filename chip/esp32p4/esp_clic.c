@@ -16,8 +16,7 @@
 
 #include "riscv_internal.h"
 
-#if defined(CONFIG_ARCH_RISCV_INTXCPT_EXTENSIONS) && \
-    defined(CONFIG_ESP32P4_SELECTS_REV_LESS_V3)
+#ifdef CONFIG_ARCH_RISCV_INTXCPT_EXTENSIONS
 
 /****************************************************************************
  * Pre-processor Definitions
@@ -32,6 +31,7 @@
 
 void riscv_initial_extctx_state(struct tcb_s *tcb)
 {
+#ifdef CONFIG_ESP32P4_SELECTS_REV_LESS_V3
   /* Draft CLIC stores both MPIL and MPP in mcause.  New NuttX tasks need
    * MPIL=0 so normal interrupts are accepted, but MPP must be M-mode or the
    * first mret into the task would enter U-mode and privileged CSR accesses
@@ -46,6 +46,13 @@ void riscv_initial_extctx_state(struct tcb_s *tcb)
    */
 
   tcb->xcp.regs[REG_INT_CTX] &= ~MSTATUS_FS;
+#endif
+#else
+  /* The extension option can remain enabled after switching from legacy
+   * revisions to v3.x.  These revisions need no draft CLIC context.
+   */
+
+  (void)tcb;
 #endif
 }
 

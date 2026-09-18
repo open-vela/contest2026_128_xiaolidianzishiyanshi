@@ -36,7 +36,7 @@ ifeq ($(CONFIG_ESP32P4_PPA),y)
 	CHIP_CSRCS += esp32p4_ppa.c esp32p4_ppa_hal.c esp32p4_ppa_dma2d.c
 endif
 
-ifeq ($(CONFIG_ESP32P4_SELECTS_REV_LESS_V3),y)
+ifeq ($(CONFIG_ARCH_FPU),y)
 	LDFLAGS += --wrap=riscv_restorefpu
 endif
 
