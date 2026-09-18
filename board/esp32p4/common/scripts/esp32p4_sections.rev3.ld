@@ -58,9 +58,11 @@ SECTIONS
 #if CONFIG_P4_REV3_MSPI_CRASH_AFTER_POWER_UP_WORKAROUND
   .rtc.p4_rev3_mspi_workaround :
   {
-    ALIGNED_SYMBOL(4, _rtc_p4_rev3_mspi_workaround_start)
+    . = ALIGN(4);
+    _rtc_p4_rev3_mspi_workaround_start = ABSOLUTE(.);
     KEEP (*(.p4_rev3_mspi_workaround.rtc_text .p4_rev3_mspi_workaround.rtc_text.*))
-    ALIGNED_SYMBOL(4, _rtc_p4_rev3_mspi_workaround_end)
+    . = ALIGN(4);
+    _rtc_p4_rev3_mspi_workaround_end = ABSOLUTE(.);
   } > rev3_mspi_workaround_seg
 #endif
 
