@@ -45,12 +45,18 @@
 #define EK79007_BPP 24
 #define EK79007_DPI_CLOCK_MHZ 48
 
-/* Keep the currently verified diagnostic behavior.  The panel BIST and the
- * DSI host vertical color bars intentionally remain enabled until the bridge
- * and continuous DW-GDMA framebuffer path have separate hardware coverage.
+/* Normal framebuffer operation.  BIST is useful for panel diagnostics but
+ * masks all pixels produced by LVGL through the MIPI-DPI framebuffer.
  */
 
-#define EK79007_ENABLE_BIST 1
+#define EK79007_ENABLE_BIST 0
+
+/* EK79007 does not return DCS diagnostic data on this board wiring.  These
+ * reads are not required to enter video mode and enabling BTA only adds a
+ * misleading -ENODATA report after the panel has accepted Display On.
+ */
+
+#define EK79007_ENABLE_READBACK 0
 
 /****************************************************************************
  * Private Types
@@ -96,9 +102,10 @@ static int ek79007_dcs_write(FAR struct mipi_dsi_device* device, uint8_t cmd,
 static FAR struct mipi_dsi_device* ek79007_initialize(
   FAR struct mipi_dsi_host* host) {
   FAR struct mipi_dsi_device* device;
+#if EK79007_ENABLE_READBACK
   uint8_t id[4] = {0};
-
   uint8_t pwr = 0;
+#endif
   unsigned int i;
   uint8_t data;
   int ret;
@@ -179,6 +186,7 @@ static FAR struct mipi_dsi_device* ek79007_initialize(
 
   up_udelay(20000);
 
+#if EK79007_ENABLE_READBACK
   ret = esp_mipi_dsi_dcs_read(device, 0x04, id, sizeof(id));
   syslog(ret > 0 ? LOG_INFO : LOG_WARNING,
          "MIPI: Display ID read: ret=%d id=%02x %02x %02x %02x\n", ret, id[0],
@@ -187,6 +195,7 @@ static FAR struct mipi_dsi_device* ek79007_initialize(
   ret = esp_mipi_dsi_dcs_read(device, 0x0a, &pwr, 1);
   syslog(ret > 0 ? LOG_INFO : LOG_WARNING,
          "MIPI: Power mode read: ret=%d val=%02x\n", ret, pwr);
+#endif
 
   return device;
 }
@@ -205,7 +214,7 @@ static const struct esp_mipi_dsi_config_s g_ek79007_config = {
   .bpp = EK79007_BPP,
   .format = MIPI_DSI_FMT_RGB888,
   .dpi_clock_mhz = EK79007_DPI_CLOCK_MHZ,
-  .use_test_pattern = true,
+  .use_test_pattern = false,
   .panel_initialize = ek79007_initialize,
   .backlight = ek79007_backlight,
 };

@@ -198,7 +198,6 @@ int main(int argc, char *argv[])
 
   lv_init();
   lv_nuttx_dsc_init(&info);
-  info.fb_path = "/dev/lcd0";
   lv_nuttx_init(&info, &result);
   if (result.disp == NULL)
     {

@@ -39,11 +39,12 @@ config LVX_USE_DEMO_CONTEST2026_128_LVGL_PPA
 	depends on ESP32P4_PPA
 	depends on GRAPHICS_LVGL
 	depends on LV_USE_NUTTX
-	depends on LV_USE_NUTTX_LCD
+	depends on LV_USE_NUTTX_LCD || VIDEO_FB
 	---help---
 		Build the lvgl_ppa NSH application and the application-side LVGL 9.1
 		draw-unit adapter.  The adapter accelerates fills, RGB/A8/ARGB variable
 		images, alpha blending, color keying, scaling, and right-angle rotation
-		through PPA, leaving unsupported tasks to software.  When the LVGL
-		widgets demo is enabled, also build the lvgl_widget application with
-		the same PPA draw unit registered before creating the widgets UI.
+		through PPA, leaving unsupported tasks to software.  Both the NuttX
+		LCD character device and framebuffer backends are supported.  When
+		the LVGL widgets demo is enabled, also build the lvgl_widget application
+		with the same PPA draw unit registered before creating the widgets UI.

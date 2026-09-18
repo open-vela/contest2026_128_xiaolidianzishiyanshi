@@ -44,7 +44,6 @@ int main(int argc, char *argv[])
 
   lv_init();
   lv_nuttx_dsc_init(&info);
-  info.fb_path = "/dev/lcd0";
 
 #ifdef CONFIG_INPUT_TOUCHSCREEN
   info.input_path = "/dev/input0";

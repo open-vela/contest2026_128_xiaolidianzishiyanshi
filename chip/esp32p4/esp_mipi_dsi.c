@@ -26,6 +26,7 @@
 #include <nuttx/config.h>
 
 #include <errno.h>
+#include <sched.h>
 #include <stdint.h>
 #include <string.h>
 #include <syslog.h>
@@ -37,11 +38,16 @@
 #include <nuttx/spinlock.h>
 #include <nuttx/video/fb.h>
 #include <nuttx/video/mipi_dsi.h>
+#include <nuttx/video/mipi_display.h>
 
 #include "esp_cache.h"
 #include "esp_clk_tree.h"
+#include "esp_err.h"
 #include "esp_private/esp_psram_extram.h"
 #include "esp_private/periph_ctrl.h"
+#include "espressif/esp_irq.h"
+#include "hal/axi_icm_ll.h"
+#include "hal/cache_ll.h"
 #include "hal/clk_gate_ll.h"
 #include "hal/config.h"
 #include "hal/dw_gdma_hal.h"
@@ -63,6 +69,18 @@
 #define DSI_BUS 0
 #define DSI_POLL_LOOPS 100000
 #define DSI_DMA_CHANNEL 0
+#define DSI_DMA_ERROR_EVENTS                                                \
+  (DW_GDMA_LL_CHANNEL_EVENT_SRC_DEC_ERR |                                   \
+   DW_GDMA_LL_CHANNEL_EVENT_DST_DEC_ERR |                                   \
+   DW_GDMA_LL_CHANNEL_EVENT_SRC_SLV_ERR |                                   \
+   DW_GDMA_LL_CHANNEL_EVENT_DST_SLV_ERR |                                   \
+   DW_GDMA_LL_CHANNEL_EVENT_LLI_RD_DEC_ERR |                                \
+   DW_GDMA_LL_CHANNEL_EVENT_LLI_WR_DEC_ERR |                                \
+   DW_GDMA_LL_CHANNEL_EVENT_LLI_RD_SLV_ERR |                                \
+   DW_GDMA_LL_CHANNEL_EVENT_LLI_WR_SLV_ERR |                                \
+   DW_GDMA_LL_CHANNEL_EVENT_SHADOWREG_OR_LLI_INVALID_ERR)
+#define DSI_DMA_EVENTS                                                      \
+  (DW_GDMA_LL_CHANNEL_EVENT_DMA_TFR_DONE | DSI_DMA_ERROR_EVENTS)
 
 #if HAL_CONFIG(CHIP_SUPPORT_MIN_REV) >= 300
 #define DSI_PHY_REF_HZ 40000000
@@ -82,6 +100,12 @@ struct esp_dsi_s {
   mipi_dsi_hal_context_t hal;
   dw_gdma_hal_context_t dma;
   mutex_t lock;
+  int dma_cpuint;
+  volatile uint32_t dma_error;
+  volatile uint8_t current_fb;
+  volatile uint8_t pending_fb;
+  struct fb_area_s last_update;
+  bool last_update_valid;
   bool initialized;
 };
 
@@ -89,7 +113,7 @@ struct esp_dsi_s {
  * Private Function Prototypes
  ****************************************************************************/
 
-static int esp_dsi_dma_submit(struct esp_dsi_s* priv);
+static int esp_dsi_dma_initialize(struct esp_dsi_s* priv);
 
 /****************************************************************************
  * Private Data
@@ -97,7 +121,10 @@ static int esp_dsi_dma_submit(struct esp_dsi_s* priv);
 
 static struct esp_dsi_s g_dsi = {
   .lock = NXMUTEX_INITIALIZER,
+  .dma_cpuint = -1,
 };
+
+static dw_gdma_link_list_item_t g_dsi_dma_lli;
 
 static FAR uint8_t* g_framebuffer;
 static FAR const struct esp_mipi_dsi_config_s* g_config;
@@ -124,55 +151,128 @@ static int esp_dsi_getvideoinfo(struct fb_vtable_s* vtable,
 
 static int esp_dsi_getplaneinfo(struct fb_vtable_s* vtable, int planeno,
                                 struct fb_planeinfo_s* pinfo) {
+  size_t fb_size;
   size_t stride;
 
   (void)vtable;
 
-  if (planeno != 0 || pinfo == NULL) {
+  if ((planeno != 0 && planeno != 1) || pinfo == NULL) {
     return -EINVAL;
   }
 
   stride = (size_t)g_config->width * g_config->bpp / 8;
+  fb_size = stride * g_config->height;
   pinfo->fbmem = g_framebuffer;
-  pinfo->fblen = stride * g_config->height;
+  pinfo->fblen = fb_size * 2;
   pinfo->stride = stride;
-  pinfo->display = 0;
+  pinfo->display = planeno;
   pinfo->bpp = g_config->bpp;
+  pinfo->xres_virtual = g_config->width;
+  pinfo->yres_virtual = g_config->height * 2;
+  pinfo->xoffset = 0;
+  pinfo->yoffset = g_dsi.current_fb * g_config->height;
+  return OK;
+}
+
+static int esp_dsi_pandisplay(struct fb_vtable_s* vtable,
+                              struct fb_planeinfo_s* pinfo) {
+  uint32_t fb;
+
+  (void)vtable;
+
+  if (pinfo == NULL || pinfo->xoffset != 0 ||
+      (pinfo->yoffset != 0 && pinfo->yoffset != g_config->height)) {
+    return -EINVAL;
+  }
+
+  fb = pinfo->yoffset / g_config->height;
+
+  /* Commit the completed LVGL draw buffer at the next frame boundary.  The
+   * DMA completion ISR owns the actual descriptor switch, so the buffer
+   * currently being scanned is never changed halfway through a frame.
+   */
+
+  g_dsi.pending_fb = fb;
   return OK;
 }
 
 #ifdef CONFIG_FB_UPDATE
+static int esp_dsi_cache_sync_area(uint8_t fb,
+                                   const struct fb_area_s* area) {
+  uintptr_t start;
+  size_t bytes_per_pixel = g_config->bpp / 8;
+  size_t stride = (size_t)g_config->width * bytes_per_pixel;
+  size_t fb_size = stride * g_config->height;
+  size_t row_len = (size_t)area->w * bytes_per_pixel;
+  uint32_t row;
+
+  start = (uintptr_t)g_framebuffer + (size_t)fb * fb_size +
+          (size_t)area->y * stride + (size_t)area->x * bytes_per_pixel;
+
+  for (row = 0; row < area->h; row++) {
+    if (esp_cache_msync((void*)(start + row * stride), row_len,
+                        ESP_CACHE_MSYNC_FLAG_DIR_C2M |
+                          ESP_CACHE_MSYNC_FLAG_UNALIGNED) != ESP_OK) {
+      return -EIO;
+    }
+  }
+
+  return OK;
+}
+
 static int esp_dsi_updatearea(struct fb_vtable_s* vtable,
                               const struct fb_area_s* area) {
-  uintptr_t start;
-  size_t stride;
-  size_t len;
+  struct fb_area_s update;
+  uint32_t fb;
 
   (void)vtable;
 
-  if (area == NULL || area->x >= g_config->width ||
-      area->y >= g_config->height) {
+  if (area == NULL || area->w == 0 || area->h == 0 ||
+      area->x >= g_config->width || area->y >= g_config->height * 2) {
     return -EINVAL;
   }
 
-  stride = (size_t)g_config->width * g_config->bpp / 8;
-  start = (uintptr_t)g_framebuffer + area->y * stride;
-  len = ((area->y + area->h > g_config->height) ? g_config->height - area->y
-                                                : area->h) *
-        stride;
-  if (esp_cache_msync((void*)start, len,
-                      ESP_CACHE_MSYNC_FLAG_DIR_C2M |
-                        ESP_CACHE_MSYNC_FLAG_UNALIGNED) != ESP_OK) {
+  fb = area->y / g_config->height;
+  update.x = area->x;
+  update.y = area->y % g_config->height;
+  update.w = area->x + area->w > g_config->width ?
+               g_config->width - area->x : area->w;
+  update.h = update.y + area->h > g_config->height ?
+               g_config->height - update.y : area->h;
+
+  /* LVGL's double-buffered DIRECT mode first copies the previous frame's
+   * dirty areas into the new off-screen buffer, then renders this frame's
+   * invalid areas.  FBIO_UPDATE reports only the latter.  Write back both
+   * rectangles or the automatic buffer synchronization remains cache-only
+   * and the display DMA sees stale PSRAM pixels from the older frame.
+   */
+
+  if (g_dsi.last_update_valid &&
+      esp_dsi_cache_sync_area(fb, &g_dsi.last_update) < 0) {
     return -EIO;
   }
 
-  return g_dsi.initialized ? esp_dsi_dma_submit(&g_dsi) : OK;
+  if (esp_dsi_cache_sync_area(fb, &update) < 0) {
+    return -EIO;
+  }
+
+  g_dsi.last_update = update;
+  g_dsi.last_update_valid = true;
+
+  if (g_dsi.dma_error != 0) {
+    syslog(LOG_ERR, "ERROR: MIPI DW-GDMA stopped (status=%08lx)\n",
+           (unsigned long)g_dsi.dma_error);
+    return -EIO;
+  }
+
+  return OK;
 }
 #endif
 
 static struct fb_vtable_s g_fbops = {
   .getvideoinfo = esp_dsi_getvideoinfo,
   .getplaneinfo = esp_dsi_getplaneinfo,
+  .pandisplay = esp_dsi_pandisplay,
 #ifdef CONFIG_FB_UPDATE
   .updatearea = esp_dsi_updatearea,
 #endif
@@ -219,6 +319,19 @@ static int esp_dsi_wait_tx_done(struct esp_dsi_s* priv) {
   return -ETIMEDOUT;
 }
 
+static bool esp_dsi_is_read_packet(uint8_t type) {
+  switch (type) {
+    case MIPI_DSI_GENERIC_READ_0_PARAM:
+    case MIPI_DSI_GENERIC_READ_1_PARAM:
+    case MIPI_DSI_GENERIC_READ_2_PARAM:
+    case MIPI_DSI_DCS_READ_0_PARAM:
+      return true;
+
+    default:
+      return false;
+  }
+}
+
 static ssize_t esp_dsi_transfer(struct mipi_dsi_host* host,
                                 const struct mipi_dsi_msg* msg) {
   struct esp_dsi_s* priv = (struct esp_dsi_s*)host;
@@ -235,7 +348,12 @@ static ssize_t esp_dsi_transfer(struct mipi_dsi_host* host,
 
   buf = msg->tx_buf;
 
-  if (msg->rx_len != 0) {
+  /* Decide transfer direction from the packet data type.  Some NuttX DSI
+   * write helpers leave rx_len/rx_buf uninitialized, so consulting rx_len
+   * here can randomly reject a valid write with -ENOTSUP.
+   */
+
+  if (esp_dsi_is_read_packet(msg->type)) {
     return -ENOTSUP;
   }
 
@@ -407,94 +525,163 @@ int esp_mipi_dsi_dcs_read(struct mipi_dsi_device* device, uint8_t cmd,
   return ret;
 }
 
-static int esp_dsi_dma_submit(struct esp_dsi_s* priv) {
+static inline dw_gdma_link_list_item_t* esp_dsi_dma_lli_noncache(void) {
+  return (dw_gdma_link_list_item_t*)CACHE_LL_L2MEM_NON_CACHE_ADDR(
+    &g_dsi_dma_lli);
+}
+
+static void esp_dsi_dma_reload(struct esp_dsi_s* priv) {
   dw_gdma_dev_t* dma = priv->dma.dev;
-  size_t fb_size;
-  int ret;
+  dw_gdma_link_list_item_t* lli = esp_dsi_dma_lli_noncache();
+  size_t fb_size = (size_t)g_config->width * g_config->height *
+                   g_config->bpp / 8;
+  uint8_t fb = priv->pending_fb;
 
-  ret = nxmutex_lock(&priv->lock);
-  if (ret < 0) {
-    return ret;
-  }
-
-  /* A completed transfer disables the channel automatically.  Use the
-   * normal disable path as a harmless guard before reconfiguration.  The
-   * force-abort path can violate AXI protocol and has been observed to hang
-   * the system when called on the display channel after frame completion.
+  /* DW-GDMA clears the valid marker after consuming the descriptor.  Restore
+   * it, reload the single-item list, and restart immediately so the DPI bridge
+   * receives a continuous video stream without a worker thread or framebuffer
+   * copies.  This is the same restart sequence used by ESP-IDF's DPI panel.
    */
 
-  fb_size = (size_t)g_config->width * g_config->height * g_config->bpp / 8;
-  dw_gdma_ll_channel_enable(dma, DSI_DMA_CHANNEL, false);
-  dw_gdma_ll_channel_set_src_addr(dma, DSI_DMA_CHANNEL,
-                                  (uint32_t)g_framebuffer);
-  dw_gdma_ll_channel_set_dst_addr(dma, DSI_DMA_CHANNEL, MIPI_DSI_BRG_MEM_BASE);
-  dw_gdma_ll_channel_set_trans_block_size(dma, DSI_DMA_CHANNEL, fb_size / 8);
-  dw_gdma_ll_channel_set_src_master_port(dma, DSI_DMA_CHANNEL,
-                                         (uint32_t)g_framebuffer);
-  dw_gdma_ll_channel_set_dst_master_port(dma, DSI_DMA_CHANNEL,
-                                         MIPI_DSI_BRG_MEM_BASE);
-  dw_gdma_ll_channel_set_src_trans_width(dma, DSI_DMA_CHANNEL,
-                                         DW_GDMA_TRANS_WIDTH_64);
-  dw_gdma_ll_channel_set_dst_trans_width(dma, DSI_DMA_CHANNEL,
-                                         DW_GDMA_TRANS_WIDTH_64);
-  dw_gdma_ll_channel_set_src_burst_items(dma, DSI_DMA_CHANNEL,
-                                         DW_GDMA_BURST_ITEMS_16);
-  dw_gdma_ll_channel_set_dst_burst_items(dma, DSI_DMA_CHANNEL,
-                                         DW_GDMA_BURST_ITEMS_16);
-  dw_gdma_ll_channel_set_src_burst_mode(dma, DSI_DMA_CHANNEL,
-                                        DW_GDMA_BURST_MODE_INCREMENT);
-  dw_gdma_ll_channel_set_dst_burst_mode(dma, DSI_DMA_CHANNEL,
-                                        DW_GDMA_BURST_MODE_FIXED);
-  dw_gdma_ll_channel_set_src_burst_len(dma, DSI_DMA_CHANNEL, 16);
-  dw_gdma_ll_channel_set_dst_burst_len(dma, DSI_DMA_CHANNEL, 16);
-  dw_gdma_ll_channel_enable_src_periph_status_write_back(dma, DSI_DMA_CHANNEL,
-                                                         false);
-  dw_gdma_ll_channel_enable_dst_periph_status_write_back(dma, DSI_DMA_CHANNEL,
-                                                         false);
+  dw_gdma_ll_lli_set_src_addr(
+    lli, (uint32_t)(g_framebuffer + (size_t)fb * fb_size));
+  dw_gdma_ll_lli_set_block_markers(lli, false, true, true);
+  dw_gdma_ll_channel_set_link_list_master_port(
+    dma, DSI_DMA_CHANNEL, DW_GDMA_LL_MASTER_PORT_MEMORY);
+  dw_gdma_ll_channel_set_link_list_head_addr(
+    dma, DSI_DMA_CHANNEL, (uint32_t)&g_dsi_dma_lli);
   dw_gdma_ll_channel_enable(dma, DSI_DMA_CHANNEL, true);
-  ret = OK;
+  priv->current_fb = fb;
+}
 
-  nxmutex_unlock(&priv->lock);
-  return ret;
+static int esp_dsi_dma_interrupt(int irq, void* context, void* arg) {
+  struct esp_dsi_s* priv = arg;
+  dw_gdma_dev_t* dma = priv->dma.dev;
+  uint32_t status;
+
+  (void)irq;
+  (void)context;
+
+  status = dw_gdma_ll_channel_get_intr_status(dma, DSI_DMA_CHANNEL);
+  dw_gdma_ll_channel_clear_intr(dma, DSI_DMA_CHANNEL, status);
+
+  if ((status & DSI_DMA_ERROR_EVENTS) != 0) {
+    priv->dma_error |= status & DSI_DMA_ERROR_EVENTS;
+  } else if ((status & DW_GDMA_LL_CHANNEL_EVENT_DMA_TFR_DONE) != 0) {
+    esp_dsi_dma_reload(priv);
+    fb_notify_vsync(&g_fbops);
+    (void)fb_remove_paninfo(&g_fbops, FB_NO_OVERLAY);
+  }
+
+  return OK;
 }
 
 static int esp_dsi_dma_initialize(struct esp_dsi_s* priv) {
+  dw_gdma_link_list_item_t* lli;
   dw_gdma_dev_t* dma;
-  irqstate_t flags;
+  size_t fb_size;
+  int cpuint;
+  int ret;
 
-  /* The MIPI configuration owns channel 0 of the display/CSI DW-GDMA.
-   * Configure the controller directly so the NuttX driver does not depend
-   * on the OS-specific ESP-IDF upper-HAL wrapper.
+  /* The ESP-IDF upper DW-GDMA driver depends on FreeRTOS.  Reproduce its
+   * channel and one-item linked-list setup here with the NuttX interrupt
+   * router, while retaining the descriptor layout and programming sequence.
    */
 
-  flags = up_irq_save();
-  (dw_gdma_ll_enable_bus_clock)(0, true);
-  _dw_gdma_ll_reset_register(0);
-  up_irq_restore(flags);
+  memset(&g_dsi_dma_lli, 0, sizeof(g_dsi_dma_lli));
+  ret = esp_cache_msync(&g_dsi_dma_lli, sizeof(g_dsi_dma_lli),
+                        ESP_CACHE_MSYNC_FLAG_DIR_C2M |
+                          ESP_CACHE_MSYNC_FLAG_INVALIDATE |
+                          ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+  if (ret != ESP_OK) {
+    return -EIO;
+  }
+
+  lli = esp_dsi_dma_lli_noncache();
+  fb_size = (size_t)g_config->width * g_config->height * g_config->bpp / 8;
+  dw_gdma_ll_lli_set_next_item_addr(lli, 0);
+  dw_gdma_ll_lli_set_link_list_master_port(
+    lli, DW_GDMA_LL_MASTER_PORT_MEMORY);
+  dw_gdma_ll_lli_set_src_addr(lli, (uint32_t)g_framebuffer);
+  dw_gdma_ll_lli_set_dst_addr(lli, MIPI_DSI_BRG_MEM_BASE);
+  dw_gdma_ll_lli_set_trans_block_size(lli, fb_size / 8);
+  dw_gdma_ll_lli_set_src_master_port(lli, (intptr_t)g_framebuffer);
+  dw_gdma_ll_lli_set_dst_master_port(lli, MIPI_DSI_BRG_MEM_BASE);
+  dw_gdma_ll_lli_set_src_trans_width(lli, DW_GDMA_TRANS_WIDTH_64);
+  dw_gdma_ll_lli_set_dst_trans_width(lli, DW_GDMA_TRANS_WIDTH_64);
+  dw_gdma_ll_lli_set_src_burst_items(lli, DW_GDMA_BURST_ITEMS_512);
+  dw_gdma_ll_lli_set_dst_burst_items(lli, DW_GDMA_BURST_ITEMS_256);
+  dw_gdma_ll_lli_set_src_burst_mode(lli, DW_GDMA_BURST_MODE_INCREMENT);
+  dw_gdma_ll_lli_set_dst_burst_mode(lli, DW_GDMA_BURST_MODE_FIXED);
+  dw_gdma_ll_lli_set_src_burst_len(lli, 16);
+  dw_gdma_ll_lli_set_dst_burst_len(lli, 16);
+  dw_gdma_ll_lli_enable_src_periph_status_write_back(lli, false);
+  dw_gdma_ll_lli_enable_dst_periph_status_write_back(lli, false);
+  dw_gdma_ll_lli_set_block_markers(lli, false, true, true);
+
+  PERIPH_RCC_ATOMIC() {
+    dw_gdma_ll_enable_bus_clock(0, true);
+    dw_gdma_ll_reset_register(0);
+  }
 
   dw_gdma_hal_init(&priv->dma, NULL);
   dma = priv->dma.dev;
+
+  /* Display fetches are latency-sensitive.  Give the DW-GDMA memory master
+   * maximum AXI read priority so CPU cache writeback cannot starve the DPI
+   * FIFO while LVGL publishes a frame from PSRAM.
+   */
+
+  axi_icm_ll_set_dw_gdma_qos_arbiter_prio(0, 0, 15);
   dw_gdma_ll_channel_set_trans_flow(dma, DSI_DMA_CHANNEL, DW_GDMA_ROLE_MEM,
                                     DW_GDMA_ROLE_PERIPH_DSI,
                                     DW_GDMA_FLOW_CTRL_SELF);
   dw_gdma_ll_channel_set_src_multi_block_type(
-    dma, DSI_DMA_CHANNEL, DW_GDMA_BLOCK_TRANSFER_CONTIGUOUS);
+    dma, DSI_DMA_CHANNEL, DW_GDMA_BLOCK_TRANSFER_LIST);
   dw_gdma_ll_channel_set_dst_multi_block_type(
-    dma, DSI_DMA_CHANNEL, DW_GDMA_BLOCK_TRANSFER_CONTIGUOUS);
-  dw_gdma_ll_channel_set_src_handshake_interface(dma, DSI_DMA_CHANNEL,
-                                                 DW_GDMA_HANDSHAKE_HW);
-  dw_gdma_ll_channel_set_dst_handshake_interface(dma, DSI_DMA_CHANNEL,
-                                                 DW_GDMA_HANDSHAKE_HW);
-  dw_gdma_ll_channel_set_dst_handshake_periph(dma, DSI_DMA_CHANNEL,
-                                              DW_GDMA_ROLE_PERIPH_DSI);
-  dw_gdma_ll_channel_set_priority(dma, DSI_DMA_CHANNEL, 0);
+    dma, DSI_DMA_CHANNEL, DW_GDMA_BLOCK_TRANSFER_LIST);
+  dw_gdma_ll_channel_set_src_handshake_interface(
+    dma, DSI_DMA_CHANNEL, DW_GDMA_HANDSHAKE_HW);
+  dw_gdma_ll_channel_set_dst_handshake_interface(
+    dma, DSI_DMA_CHANNEL, DW_GDMA_HANDSHAKE_HW);
+  dw_gdma_ll_channel_set_dst_handshake_periph(
+    dma, DSI_DMA_CHANNEL, DW_GDMA_ROLE_PERIPH_DSI);
+  dw_gdma_ll_channel_set_priority(dma, DSI_DMA_CHANNEL, 1);
   dw_gdma_ll_channel_set_src_outstanding_limit(dma, DSI_DMA_CHANNEL, 5);
   dw_gdma_ll_channel_set_dst_outstanding_limit(dma, DSI_DMA_CHANNEL, 2);
   dw_gdma_ll_channel_set_src_periph_status_addr(dma, DSI_DMA_CHANNEL, 0);
   dw_gdma_ll_channel_set_dst_periph_status_addr(dma, DSI_DMA_CHANNEL, 0);
+  dw_gdma_ll_channel_enable_intr_propagation(dma, DSI_DMA_CHANNEL, UINT32_MAX,
+                                             false);
+  dw_gdma_ll_channel_clear_intr(dma, DSI_DMA_CHANNEL, UINT32_MAX);
   dw_gdma_ll_channel_enable_intr_generation(dma, DSI_DMA_CHANNEL, UINT32_MAX,
                                             true);
 
+  /* Interrupt routing is CPU-local, so prevent migration/preemption between
+   * allocating the CPU interrupt and enabling its peripheral IRQ.
+   */
+
+  sched_lock();
+  cpuint = esp_setup_irq(DW_GDMA_INTR_SOURCE, ESP_IRQ_PRIORITY_DEFAULT,
+                         ESP_IRQ_TRIGGER_LEVEL, esp_dsi_dma_interrupt, priv);
+  if (cpuint >= 0) {
+    priv->dma_cpuint = cpuint;
+    priv->dma_error = 0;
+    dw_gdma_ll_channel_enable_intr_propagation(
+      dma, DSI_DMA_CHANNEL, DSI_DMA_EVENTS, true);
+    up_enable_irq(ESP_IRQ_DW_GDMA);
+  }
+
+  sched_unlock();
+  if (cpuint < 0) {
+    dw_gdma_hal_deinit(&priv->dma);
+    return cpuint;
+  }
+
+  priv->current_fb = 0;
+  priv->pending_fb = 0;
+  priv->last_update_valid = false;
+  esp_dsi_dma_reload(priv);
   return OK;
 }
 
@@ -704,22 +891,9 @@ static int esp_dsi_hardware_initialize(struct esp_dsi_s* priv) {
   mipi_dsi_brg_ll_enable(priv->hal.bridge, true);
   mipi_dsi_brg_ll_update_dpi_config(priv->hal.bridge);
 
-  syslog(LOG_INFO, "MIPI: configuring DPI bridge and display DMA\n");
-  ret = esp_dsi_dma_initialize(priv);
-  if (ret < 0) {
-    return ret;
-  }
-
-  /* Diagnostic mode: use the DSI host's built-in pattern generator to
-   * validate the panel, PHY and video timing independently of DW-GDMA.
-   */
-
-  mipi_dsi_brg_ll_enable_dpi_output(priv->hal.bridge, false);
-  mipi_dsi_brg_ll_update_dpi_config(priv->hal.bridge);
-
-  /* Do not make video progress depend on a per-frame response.  Force CLK
-   * lane to stay in HS mode and disable LP blanking to rule out LP/HS
-   * transition issues that may prevent the panel from receiving video data.
+  /* This panel is operated entirely in HS video mode.  Its command path does
+   * not provide a reliable BTA response, so video must not wait for a frame
+   * acknowledgement before starting the next frame.
    */
 
   mipi_dsi_host_ll_dpi_enable_frame_ack(priv->hal.host, false);
@@ -732,48 +906,23 @@ static int esp_dsi_hardware_initialize(struct esp_dsi_s* priv) {
                                         MIPI_DSI_LL_CLOCK_LANE_STATE_HS);
   syslog(LOG_INFO, "MIPI: forced HS video mode (no LP blanking)\n");
   if (g_config->use_test_pattern) {
+    mipi_dsi_brg_ll_enable_dpi_output(priv->hal.bridge, false);
+    mipi_dsi_brg_ll_update_dpi_config(priv->hal.bridge);
     mipi_dsi_host_ll_dpi_set_pattern_type(priv->hal.host,
                                           MIPI_DSI_PATTERN_BAR_VERTICAL);
+  } else {
+    syslog(LOG_INFO, "MIPI: configuring framebuffer DW-GDMA\n");
+    ret = esp_dsi_dma_initialize(priv);
+    if (ret < 0) {
+      return ret;
+    }
   }
 
   mipi_dsi_host_ll_enable_video_mode(priv->hal.host, true);
-  up_udelay(100000);
-  syslog(LOG_INFO,
-         "MIPI: status shadow=%08lx mode=%08lx active=%08lx "
-         "pkt=%08lx/%08lx phy=%08lx int=%08lx/%08lx\n",
-         (unsigned long)priv->hal.host->vid_shadow_ctrl.val,
-         (unsigned long)priv->hal.host->vid_mode_cfg.val,
-         (unsigned long)priv->hal.host->vid_mode_cfg_act.val,
-         (unsigned long)priv->hal.host->vid_pkt_size.val,
-         (unsigned long)priv->hal.host->vid_pkt_size_act.val,
-         (unsigned long)priv->hal.host->phy_status.val,
-         (unsigned long)priv->hal.host->int_st0.val,
-         (unsigned long)priv->hal.host->int_st1.val);
-  syslog(LOG_INFO, "MIPI: bridge en=%08lx dpi=%08lx fifo=%08lx raw=%08lx\n",
-         (unsigned long)priv->hal.bridge->en.val,
-         (unsigned long)priv->hal.bridge->dpi_lcd_ctl.val,
-         (unsigned long)priv->hal.bridge->fifo_flow_status.val,
-         (unsigned long)priv->hal.bridge->int_raw.val);
-  syslog(LOG_INFO, "MIPI: H req=%lu/%lu/%lu act=%lu/%lu/%lu\n",
-         (unsigned long)priv->hal.host->vid_hsa_time.val,
-         (unsigned long)priv->hal.host->vid_hbp_time.val,
-         (unsigned long)priv->hal.host->vid_hline_time.val,
-         (unsigned long)priv->hal.host->vid_hsa_time_act.val,
-         (unsigned long)priv->hal.host->vid_hbp_time_act.val,
-         (unsigned long)priv->hal.host->vid_hline_time_act.val);
-  syslog(LOG_INFO,
-         "MIPI: V req=%lu/%lu/%lu/%lu act=%lu/%lu/%lu/%lu "
-         "color=%08lx/%08lx\n",
-         (unsigned long)priv->hal.host->vid_vsa_lines.val,
-         (unsigned long)priv->hal.host->vid_vbp_lines.val,
-         (unsigned long)priv->hal.host->vid_vfp_lines.val,
-         (unsigned long)priv->hal.host->vid_vactive_lines.val,
-         (unsigned long)priv->hal.host->vid_vsa_lines_act.val,
-         (unsigned long)priv->hal.host->vid_vbp_lines_act.val,
-         (unsigned long)priv->hal.host->vid_vfp_lines_act.val,
-         (unsigned long)priv->hal.host->vid_vactive_lines_act.val,
-         (unsigned long)priv->hal.host->dpi_color_coding.val,
-         (unsigned long)priv->hal.host->dpi_color_coding_act.val);
+  if (!g_config->use_test_pattern) {
+    mipi_dsi_brg_ll_enable_dpi_output(priv->hal.bridge, true);
+    mipi_dsi_brg_ll_update_dpi_config(priv->hal.bridge);
+  }
 
   g_config->backlight(true);
   syslog(LOG_INFO, "MIPI: %s enabled\n",
@@ -790,6 +939,7 @@ int esp_mipi_dsi_set_config(const struct esp_mipi_dsi_config_s* config) {
   if (config == NULL || config->lanes == 0 || config->lanes > 2 ||
       config->lane_rate_mbps == 0 || config->width == 0 ||
       config->height == 0 || config->dpi_clock_mhz == 0 || config->bpp != 24 ||
+      ((size_t)config->width * config->height * config->bpp / 8) % 8 != 0 ||
       config->format != MIPI_DSI_FMT_RGB888 ||
       config->panel_initialize == NULL || config->backlight == NULL) {
     return -EINVAL;
@@ -821,17 +971,17 @@ int up_fbinitialize(int display) {
   fb_size = (size_t)g_config->width * g_config->height * g_config->bpp / 8;
   if (!g_dsi.initialized) {
     if (g_framebuffer == NULL) {
-      g_framebuffer = kmm_memalign(64, fb_size);
+      g_framebuffer = kmm_memalign(64, fb_size * 2);
       if (g_framebuffer == NULL) {
         syslog(LOG_ERR,
                "ERROR: MIPI framebuffer allocation failed "
                "(%u bytes)\n",
-               (unsigned int)fb_size);
+               (unsigned int)(fb_size * 2));
         return -ENOMEM;
       }
 
       if (!esp_psram_check_ptr_addr(g_framebuffer) ||
-          !esp_psram_check_ptr_addr(g_framebuffer + fb_size - 1)) {
+          !esp_psram_check_ptr_addr(g_framebuffer + fb_size * 2 - 1)) {
         syslog(LOG_ERR, "ERROR: MIPI framebuffer was not allocated in PSRAM\n");
         kmm_free(g_framebuffer);
         g_framebuffer = NULL;
@@ -839,7 +989,13 @@ int up_fbinitialize(int display) {
       }
     }
 
-    memset(g_framebuffer, 0, fb_size);
+    memset(g_framebuffer, 0, fb_size * 2);
+    if (esp_cache_msync(g_framebuffer, fb_size * 2,
+                        ESP_CACHE_MSYNC_FLAG_DIR_C2M |
+                          ESP_CACHE_MSYNC_FLAG_UNALIGNED) != ESP_OK) {
+      return -EIO;
+    }
+
     ret = esp_dsi_hardware_initialize(&g_dsi);
     if (ret >= 0) {
       g_dsi.initialized = true;
