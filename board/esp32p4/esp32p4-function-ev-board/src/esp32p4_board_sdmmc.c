@@ -103,7 +103,7 @@ static int esp32p4_sdmmc_slot0_enable_power(void)
 }
 #endif
 
-#ifdef CONFIG_ESP32P4_SDMMC_SLOT1
+#if defined(CONFIG_ESP32P4_SDMMC_SLOT1) && !defined(CONFIG_ESP_HOSTED)
 /****************************************************************************
  * Name: esp32p4_sdmmc_slot1_configure_pins
  *
@@ -174,7 +174,7 @@ static void esp32p4_sdmmc_slot1_configure_pins(void)
          BOARD_SDMMC_SLOT1_D0,  BOARD_SDMMC_SLOT1_D1,
          BOARD_SDMMC_SLOT1_D2,  BOARD_SDMMC_SLOT1_D3);
 }
-#endif /* CONFIG_ESP32P4_SDMMC_SLOT1 */
+#endif /* CONFIG_ESP32P4_SDMMC_SLOT1 && !CONFIG_ESP_HOSTED */
 
 /****************************************************************************
  * Public Functions
@@ -187,8 +187,9 @@ static void esp32p4_sdmmc_slot1_configure_pins(void)
  *   Initialize SDMMC subsystem for the ESP32-P4 Function EV Board.
  *
  *   Slot 0 (TF card): IOMUX pins configured by chip driver.
- *   Slot 1 (ESP-Hosted): GPIO matrix pins configured here before calling
- *   sdio_initialize(), then registered as /dev/mmcsd1.
+ *   Slot 1 is registered as a block device only when ESP-Hosted is disabled.
+ *   When ESP-Hosted is enabled its transport owns slot 1 and initializes the
+ *   GPIO matrix and SDIO controller itself.
  *
  ****************************************************************************/
 
@@ -226,7 +227,7 @@ int board_sdmmc_initialize(void)
 #endif /* defined(CONFIG_MMCSD) && defined(CONFIG_MMCSD_SDIO) */
 #endif /* CONFIG_ESP32P4_SDMMC_SLOT0 */
 
-#ifdef CONFIG_ESP32P4_SDMMC_SLOT1
+#if defined(CONFIG_ESP32P4_SDMMC_SLOT1) && !defined(CONFIG_ESP_HOSTED)
   /* Slot 1: ESP-Hosted SDIO to ESP32-C6 (GPIO matrix).
    *
    * Configure GPIO matrix pins BEFORE sdio_initialize(1), because the chip
@@ -255,7 +256,7 @@ int board_sdmmc_initialize(void)
       syslog(LOG_INFO, "SDMMC slot 1 registered as /dev/mmcsd1\n");
     }
 #endif /* defined(CONFIG_MMCSD) && defined(CONFIG_MMCSD_SDIO) */
-#endif /* CONFIG_ESP32P4_SDMMC_SLOT1 */
+#endif /* CONFIG_ESP32P4_SDMMC_SLOT1 && !CONFIG_ESP_HOSTED */
 
   return ret;
 }

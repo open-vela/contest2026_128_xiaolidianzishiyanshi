@@ -30,7 +30,9 @@
 #include <syslog.h>
 
 #include "espressif/esp_hosted/esp_hosted_port.h"
-#include "espressif/esp_hosted/esp_hosted_netdev.h"
+#ifdef CONFIG_ESP_HOSTED_NETDEV
+#  include "espressif/esp_hosted/esp_hosted_netdev.h"
+#endif
 
 /****************************************************************************
  * Public Functions
@@ -45,12 +47,8 @@
  *   ESP-Hosted-MCU provides wireless connectivity by using the onboard
  *   ESP32-C6 as a WiFi/BLE co-processor via SDIO transport.
  *
- *   Call sequence:
- *     1. esp_hosted_port_init()    - OS abstraction layer (timers, signals)
- *     2. esp_hosted_netdev_register() - Register wlan0 network device
- *
- *   Pre-requisite: SDMMC slot 1 must be initialized and registered as
- *   /dev/mmcsd1 before calling this function.
+ *   The ESP-Hosted transport owns SDMMC slot 1.  The normal MMC/SD block
+ *   driver must not register that slot before this function is called.
  *
  ****************************************************************************/
 
@@ -67,20 +65,22 @@ int board_esp_hosted_initialize(void)
       return ret;
     }
 
-  /* Register wlan0 network device.
-   *
-   * esp_hosted_netdev_register() internally calls esp_hosted_init(), which
-   * brings up the SDIO transport to the ESP32-C6, negotiates capabilities,
-   * and registers a network interface (wlan0) in NuttX.
-   */
+  ret = esp_hosted_port_start();
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ERROR: esp_hosted_port_start failed: %d\n", ret);
+      return ret;
+    }
 
+#ifdef CONFIG_ESP_HOSTED_NETDEV
   ret = esp_hosted_netdev_register();
   if (ret < 0)
     {
       syslog(LOG_ERR, "ERROR: esp_hosted_netdev_register failed: %d\n", ret);
       return ret;
     }
+#endif
 
-  syslog(LOG_INFO, "ESP-Hosted initialized, wlan0 registered\n");
+  syslog(LOG_INFO, "ESP-Hosted SDIO transport and RPC initialized\n");
   return OK;
 }
