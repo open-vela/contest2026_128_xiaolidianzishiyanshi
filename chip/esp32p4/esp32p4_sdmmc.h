@@ -62,6 +62,19 @@ extern "C"
 
 struct sdio_dev_s *sdio_initialize(int slotno);
 
+/****************************************************************************
+ * Name: esp32p4_sdio_wait_card_interrupt
+ *
+ * Description:
+ *   Wait for an SDIO function interrupt on DAT1.  NuttX's generic SDIO
+ *   event set has no card-interrupt event, so ESP32-P4 users that need SDIO
+ *   I/O interrupts use this controller-specific entry point.
+ *
+ ****************************************************************************/
+
+int esp32p4_sdio_wait_card_interrupt(struct sdio_dev_s *dev,
+                                     uint32_t timeout_ticks);
+
 #undef EXTERN
 #if defined(__cplusplus)
 }

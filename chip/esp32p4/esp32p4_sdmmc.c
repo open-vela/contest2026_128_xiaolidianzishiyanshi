@@ -46,6 +46,7 @@
 #include <nuttx/wqueue.h>
 
 #include <arch/chip/irq.h>
+#include <arch/chip/gpio_sig_map.h>
 
 #include "espressif/esp_gpio.h"
 #include "espressif/esp_irq.h"
@@ -101,10 +102,12 @@ struct esp32p4_dev_s
 
   sem_t cmdsem;
   sem_t waitsem;
+  sem_t iosem;
   sdio_eventset_t waitevents;
   volatile sdio_eventset_t wkupevent;
   uint32_t waitmask;
   bool iowait;
+  bool ioirqwait;
   volatile uint32_t cmdstatus;
   struct wdog_s waitwdog;
 
@@ -228,6 +231,7 @@ static int esp32p4_registercallback(struct sdio_dev_s *dev,
     .slot = (n), \
     .cmdsem = SEM_INITIALIZER(0), \
     .waitsem = SEM_INITIALIZER(0), \
+    .iosem = SEM_INITIALIZER(0), \
   }
 
 static struct esp32p4_dev_s g_sdiodev[ESP32P4_SDMMC_NSLOTS] =
@@ -245,6 +249,11 @@ static struct esp32p4_host_s g_sdmmchost =
 static void esp32p4_enable_ints(struct esp32p4_dev_s *priv)
 {
   uint32_t mask = SDCARD_CMD_MASK | priv->waitmask;
+
+  if (priv->ioirqwait)
+    {
+      mask |= SDMMC_LL_EVENT_IO_SLOT0 << priv->slot;
+    }
 
   if (priv->remaining != 0)
     {
@@ -388,6 +397,15 @@ static int esp32p4_interrupt(int irq, void *context, void *arg)
   for (i = 0; i < ESP32P4_SDMMC_NSLOTS; i++)
     {
       priv = &g_sdiodev[i];
+      if (priv->ioirqwait &&
+          (pending & (SDMMC_LL_EVENT_IO_SLOT0 << i)) != 0)
+        {
+          priv->ioirqwait = false;
+          sdmmc_ll_enable_interrupt(g_sdmmchost.hw,
+                                    SDMMC_LL_EVENT_IO_SLOT0 << i, false);
+          nxsem_post(&priv->iosem);
+        }
+
       if (priv->iowait &&
           (pending & (SDMMC_LL_EVENT_IO_SLOT0 << i)) != 0)
         {
@@ -601,6 +619,7 @@ static void esp32p4_reset(struct sdio_dev_s *dev)
   priv->wkupevent = 0;
   priv->waitmask = 0;
   priv->iowait = false;
+  priv->ioirqwait = false;
   priv->cmdstatus = 0;
   priv->remaining = 0;
   priv->xfrdone = false;
@@ -612,6 +631,7 @@ static void esp32p4_reset(struct sdio_dev_s *dev)
   wd_cancel(&priv->waitwdog);
   nxsem_reset(&priv->cmdsem, 0);
   nxsem_reset(&priv->waitsem, 0);
+  nxsem_reset(&priv->iosem, 0);
   esp32p4_release_buffer(priv);
 
   esp32p4_enable_ints(priv);
@@ -1340,6 +1360,76 @@ static void esp32p4_configure_slot0(void)
 /****************************************************************************
  * Public Functions
  ****************************************************************************/
+
+int esp32p4_sdio_wait_card_interrupt(struct sdio_dev_s *dev,
+                                     uint32_t timeout_ticks)
+{
+  struct esp32p4_dev_s *priv = (struct esp32p4_dev_s *)dev;
+  uint32_t iomask;
+  irqstate_t flags;
+  int d1pin;
+  int ret;
+
+  if (priv == NULL || priv->slot < 0 ||
+      priv->slot >= ESP32P4_SDMMC_NSLOTS)
+    {
+      return -EINVAL;
+    }
+
+  if (priv->slot == 0)
+    {
+      d1pin = SDMMC_SLOT0_IOMUX_PIN_NUM_D1;
+    }
+#ifdef CONFIG_ESP32P4_SDMMC_SLOT1
+  else
+    {
+      d1pin = CONFIG_ESP32P4_SDMMC_SLOT1_PIN_D1;
+    }
+#else
+  else
+    {
+      return -ENODEV;
+    }
+#endif
+
+  iomask = SDMMC_LL_EVENT_IO_SLOT0 << priv->slot;
+  nxsem_reset(&priv->iosem, 0);
+
+  /* SDIO function interrupts are negative-edge sensitive.  Disable and
+   * clear the source first, then sample DAT1.  If DAT1 is already low the
+   * edge happened before the wait was armed and data is pending.  Otherwise
+   * a subsequent falling edge is guaranteed to wake the dedicated waiter.
+   */
+
+  flags = enter_critical_section();
+  sdmmc_ll_enable_interrupt(g_sdmmchost.hw, iomask, false);
+  sdmmc_ll_clear_interrupt(g_sdmmchost.hw, iomask);
+
+  if (!esp_gpioread(d1pin))
+    {
+      leave_critical_section(flags);
+      return OK;
+    }
+
+  priv->ioirqwait = true;
+  esp32p4_enable_ints(priv);
+  leave_critical_section(flags);
+
+  if (timeout_ticks == UINT32_MAX)
+    {
+      ret = nxsem_wait_uninterruptible(&priv->iosem);
+    }
+  else
+    {
+      ret = nxsem_tickwait_uninterruptible(&priv->iosem, timeout_ticks);
+    }
+
+  flags = enter_critical_section();
+  priv->ioirqwait = false;
+  sdmmc_ll_enable_interrupt(g_sdmmchost.hw, iomask, false);
+  leave_critical_section(flags);
+  return ret;
+}
 
 struct sdio_dev_s *sdio_initialize(int slotno)
 {
