@@ -43,4 +43,14 @@
 #define BOARD_LCD_BACKLIGHT  26
 #define BOARD_LCD_RST        27
 
+/* GT911 touchscreen on the official LCD adapter.  INT and RST are not
+ * routed to the ESP32-P4, therefore the driver uses I2C polling.
+ */
+
+#define BOARD_TOUCH_I2C_PORT       1
+#define BOARD_TOUCH_I2C_FREQUENCY  100000
+#define BOARD_TOUCH_WIDTH          1024
+#define BOARD_TOUCH_HEIGHT         600
+#define BOARD_TOUCH_DEVPATH        "/dev/input0"
+
 #endif /* __BOARDS_RISCV_ESP32P4_ESP32P4_FUNCTION_EV_BOARD_INCLUDE_BOARD_H */

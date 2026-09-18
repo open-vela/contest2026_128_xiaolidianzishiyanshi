@@ -144,5 +144,16 @@ int board_emac_init(void);
 int board_mipi_dsi_initialize(void);
 #endif
 
+/****************************************************************************
+ * Name: board_touchscreen_initialize
+ *
+ * Description:
+ *   Probe the GT911 on I2C1 and register /dev/input0.
+ ****************************************************************************/
+
+#ifdef CONFIG_ESP32P4_FUNCTION_EV_BOARD_TOUCHSCREEN
+int board_touchscreen_initialize(void);
+#endif
+
 #endif /* __ASSEMBLY__ */
 #endif /* __BOARDS_RISCV_ESP32P4_ESP32P4_FUNCTION_EV_BOARD_SRC_ESP32P4_FUNCTION_EV_BOARD_H */

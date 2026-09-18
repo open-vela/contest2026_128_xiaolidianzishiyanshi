@@ -406,6 +406,15 @@ int esp_bringup(void)
     }
 #endif
 
+#ifdef CONFIG_ESP32P4_FUNCTION_EV_BOARD_TOUCHSCREEN
+  ret = board_touchscreen_initialize();
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ERROR: Failed to initialize GT911 touchscreen: %d\n",
+             ret);
+    }
+#endif
+
 #ifdef CONFIG_SENSORS_BMP180
   /* Try to register BMP180 device in I2C0 */
 
