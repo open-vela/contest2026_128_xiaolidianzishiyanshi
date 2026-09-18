@@ -156,8 +156,8 @@
 #  define LP_I2C_BUS_CLK_ATOMIC()    PERIPH_RCC_ATOMIC()
 #endif
 
-#define SCL_PIN_ATTR (FUNCTION_2 || INPUT_PULLUP || OUTPUT_OPEN_DRAIN)
-#define SDA_PIN_ATTR (FUNCTION_2 || INPUT_PULLUP || OUTPUT_OPEN_DRAIN)
+#define SCL_PIN_ATTR (FUNCTION_2 | INPUT_PULLUP | OUTPUT_OPEN_DRAIN)
+#define SDA_PIN_ATTR (FUNCTION_2 | INPUT_PULLUP | OUTPUT_OPEN_DRAIN)
 
 /****************************************************************************
  * Private Types
@@ -569,12 +569,15 @@ static void esp_i2c_sendstart(struct esp_i2c_priv_s *priv)
 
   /* Write I2C command registers */
 
+  restart_cmd.val = 0;
   restart_cmd.op_code = I2C_LL_CMD_RESTART;
 
+  write_cmd.val = 0;
   write_cmd.byte_num = 1;
   write_cmd.ack_en = 1;
   write_cmd.op_code = I2C_LL_CMD_WRITE;
 
+  end_cmd.val = 0;
   end_cmd.op_code = I2C_LL_CMD_END;
 
   i2c_ll_master_write_cmd_reg(priv->ctx->dev, restart_cmd, 0);
@@ -702,11 +705,13 @@ static void esp_i2c_startrecv(struct esp_i2c_priv_s *priv)
       ack_value = 1;
     }
 
+  read_cmd.val = 0;
   read_cmd.byte_num = n;
   read_cmd.ack_val = ack_value;
   read_cmd.op_code = I2C_LL_CMD_READ;
   i2c_ll_master_write_cmd_reg(priv->ctx->dev, read_cmd, 0);
 
+  end_cmd.val = 0;
   end_cmd.op_code = I2C_LL_CMD_END;
   i2c_ll_master_write_cmd_reg(priv->ctx->dev, end_cmd, 1);
 
