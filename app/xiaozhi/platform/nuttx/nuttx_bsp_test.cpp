@@ -5,11 +5,15 @@
 #include <nuttx/video/v4l2_cap.h>
 
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <malloc.h>
 #include <netdb.h>
 #include <poll.h>
 #include <sys/ioctl.h>
+#include <sys/mount.h>
+#include <sys/stat.h>
+#include <sys/statfs.h>
 #include <unistd.h>
 
 #include <cerrno>
@@ -27,6 +31,114 @@ constexpr size_t kCameraBytes =
     static_cast<size_t>(kCameraWidth) * kCameraHeight * 10 / 8;
 constexpr int kPreviewWidth = 320;
 constexpr int kPreviewHeight = 180;
+constexpr const char *kSdDevice = "/dev/mmcsd0";
+constexpr const char *kSdMountPoint = "/mnt/sdcard";
+constexpr size_t kMaxDirectoryEntries = 12;
+
+bool IsSdMounted() {
+  struct statfs status{};
+  return statfs(kSdMountPoint, &status) == 0 &&
+         (status.f_type == MSDOS_SUPER_MAGIC ||
+          status.f_type == FATFS_SUPER_MAGIC);
+}
+
+bool EnsureDirectory(const char *path, std::string *error) {
+  if (mkdir(path, 0777) == 0 || errno == EEXIST) {
+    return true;
+  }
+
+  *error = "无法创建挂载目录 ";
+  *error += path;
+  *error += ": ";
+  *error += std::strerror(errno);
+  return false;
+}
+
+BspTestResult RunSdMountTest() {
+  BspTestResult result;
+  if (!EnsureDirectory("/mnt", &result.message) ||
+      !EnsureDirectory(kSdMountPoint, &result.message)) {
+    return result;
+  }
+
+  if (IsSdMounted()) {
+    result.success = true;
+    result.message = "SD 卡已挂载到 ";
+    result.message += kSdMountPoint;
+    return result;
+  }
+
+  if (mount(kSdDevice, kSdMountPoint, "vfat", 0, nullptr) < 0) {
+    result.message = "挂载 ";
+    result.message += kSdDevice;
+    result.message += " 失败: ";
+    result.message += std::strerror(errno);
+    return result;
+  }
+
+  result.success = true;
+  result.message = "已将 ";
+  result.message += kSdDevice;
+  result.message += " 挂载到 ";
+  result.message += kSdMountPoint;
+  return result;
+}
+
+BspTestResult RunSdListTest() {
+  BspTestResult result;
+  if (!IsSdMounted()) {
+    result.message = "SD 卡尚未挂载，请先执行挂载测试";
+    return result;
+  }
+
+  DIR *directory = opendir(kSdMountPoint);
+  if (directory == nullptr) {
+    result.message = "无法打开 ";
+    result.message += kSdMountPoint;
+    result.message += "，请先挂载 SD 卡: ";
+    result.message += std::strerror(errno);
+    return result;
+  }
+
+  std::string entries;
+  size_t count = 0;
+  bool truncated = false;
+  errno = 0;
+  while (dirent *entry = readdir(directory)) {
+    if (std::strcmp(entry->d_name, ".") == 0 ||
+        std::strcmp(entry->d_name, "..") == 0) {
+      continue;
+    }
+    if (count == kMaxDirectoryEntries) {
+      truncated = true;
+      break;
+    }
+    if (!entries.empty()) {
+      entries += "\n";
+    }
+    entries += entry->d_name;
+    if (DIRENT_ISDIRECTORY(entry->d_type)) {
+      entries += "/";
+    }
+    ++count;
+  }
+  const int read_error = errno;
+  closedir(directory);
+
+  if (read_error != 0) {
+    result.message = "读取 SD 卡目录失败: ";
+    result.message += std::strerror(read_error);
+    return result;
+  }
+
+  result.success = true;
+  result.message = kSdMountPoint;
+  result.message += count == 0 ? " 为空" : "：\n" + entries;
+  if (truncated) {
+    result.message += "\n…（仅显示前 12 项）";
+  }
+  return result;
+}
 
 struct PingState {
   int replies{0};
@@ -234,6 +346,10 @@ BspTestResult RunNuttxBspTest(BspTestType type) {
       return RunPingTest();
     case BspTestType::kDns:
       return RunDnsTest();
+    case BspTestType::kSdMount:
+      return RunSdMountTest();
+    case BspTestType::kSdList:
+      return RunSdListTest();
     default:
       return {false, "不支持的 BSP 测试", {}, 0, 0};
   }

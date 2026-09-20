@@ -39,6 +39,9 @@ static const char *test_title(bsp_test_type_t type) {
     case BSP_TEST_PING:
     case BSP_TEST_DNS:
       return "网络测试";
+    case BSP_TEST_SD_MOUNT:
+    case BSP_TEST_SD_LIST:
+      return "SDMMC 测试";
     default:
       return "BSP 测试";
   }
@@ -116,7 +119,9 @@ static void show_dialog(bsp_test_ui_t *ui, bsp_test_type_t type) {
   ui->dialog_card = lv_obj_create(ui->dialog_overlay);
   lv_obj_set_size(ui->dialog_card,
                   type == BSP_TEST_CAMERA ? 620 : 500,
-                  type == BSP_TEST_CAMERA ? 430 : 300);
+                  type == BSP_TEST_CAMERA ? 430 :
+                  (type == BSP_TEST_SD_MOUNT ||
+                   type == BSP_TEST_SD_LIST) ? 430 : 300);
   lv_obj_center(ui->dialog_card);
 
   lv_obj_t *title = lv_label_create(ui->dialog_card);
@@ -136,6 +141,9 @@ static void show_dialog(bsp_test_ui_t *ui, bsp_test_type_t type) {
   ui->result_label = lv_label_create(ui->dialog_card);
   set_text_font(ui->result_label);
   lv_obj_set_width(ui->result_label, LV_PCT(90));
+  if (type == BSP_TEST_SD_MOUNT || type == BSP_TEST_SD_LIST) {
+    lv_obj_set_height(ui->result_label, 270);
+  }
   lv_obj_set_style_text_align(ui->result_label, LV_TEXT_ALIGN_CENTER, 0);
   lv_label_set_long_mode(ui->result_label, LV_LABEL_LONG_WRAP);
   lv_label_set_text(ui->result_label, "请选择并开始测试");
@@ -168,6 +176,19 @@ static void show_dialog(bsp_test_ui_t *ui, bsp_test_type_t type) {
     }
     if (dns != NULL) {
       lv_obj_set_width(dns, 160);
+    }
+  } else if (type == BSP_TEST_SD_MOUNT || type == BSP_TEST_SD_LIST) {
+    lv_obj_set_size(ui->action_container, LV_PCT(90), 60);
+    lv_obj_align(ui->action_container, LV_ALIGN_BOTTOM_MID, 0, -14);
+    lv_obj_t *mount = create_test_action(ui, ui->action_container,
+                                        "挂载 SD 卡", BSP_TEST_SD_MOUNT);
+    lv_obj_t *list = create_test_action(ui, ui->action_container,
+                                       "列出目录", BSP_TEST_SD_LIST);
+    if (mount != NULL) {
+      lv_obj_set_width(mount, 180);
+    }
+    if (list != NULL) {
+      lv_obj_set_width(list, 160);
     }
   } else {
     lv_obj_set_size(ui->action_container, LV_PCT(90), 60);
@@ -228,6 +249,7 @@ bsp_test_ui_t *bsp_test_ui_create(lv_obj_t *parent) {
   add_category_button(ui, "喇叭测试", BSP_TEST_SPEAKER);
   add_category_button(ui, "摄像头测试", BSP_TEST_CAMERA);
   add_category_button(ui, "网络测试", BSP_TEST_PING);
+  add_category_button(ui, "SDMMC 测试", BSP_TEST_SD_MOUNT);
   return ui;
 }
 
@@ -258,7 +280,10 @@ void bsp_test_ui_set_running(bsp_test_ui_t *ui, bsp_test_type_t type) {
   }
   if (ui->active_type != type &&
       !((ui->active_type == BSP_TEST_PING || ui->active_type == BSP_TEST_DNS) &&
-        (type == BSP_TEST_PING || type == BSP_TEST_DNS))) {
+        (type == BSP_TEST_PING || type == BSP_TEST_DNS)) &&
+      !((ui->active_type == BSP_TEST_SD_MOUNT ||
+         ui->active_type == BSP_TEST_SD_LIST) &&
+        (type == BSP_TEST_SD_MOUNT || type == BSP_TEST_SD_LIST))) {
     return;
   }
   lv_label_set_text_fmt(ui->result_label, "%s：正在执行…", test_title(type));
@@ -272,7 +297,10 @@ void bsp_test_ui_set_result(bsp_test_ui_t *ui, bsp_test_type_t type,
   }
   if (ui->active_type != type &&
       !((ui->active_type == BSP_TEST_PING || ui->active_type == BSP_TEST_DNS) &&
-        (type == BSP_TEST_PING || type == BSP_TEST_DNS))) {
+        (type == BSP_TEST_PING || type == BSP_TEST_DNS)) &&
+      !((ui->active_type == BSP_TEST_SD_MOUNT ||
+         ui->active_type == BSP_TEST_SD_LIST) &&
+        (type == BSP_TEST_SD_MOUNT || type == BSP_TEST_SD_LIST))) {
     return;
   }
 

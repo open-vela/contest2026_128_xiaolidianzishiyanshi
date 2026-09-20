@@ -16,6 +16,8 @@ enum class BspTestType {
   kCamera,
   kPing,
   kDns,
+  kSdMount,
+  kSdList,
 };
 
 struct BspTestResult {

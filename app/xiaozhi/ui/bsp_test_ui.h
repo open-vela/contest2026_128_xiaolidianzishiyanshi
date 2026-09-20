@@ -15,6 +15,8 @@ typedef enum {
   BSP_TEST_CAMERA,
   BSP_TEST_PING,
   BSP_TEST_DNS,
+  BSP_TEST_SD_MOUNT,
+  BSP_TEST_SD_LIST,
 } bsp_test_type_t;
 
 typedef void (*bsp_test_callback_t)(bsp_test_type_t type, void *user_data);

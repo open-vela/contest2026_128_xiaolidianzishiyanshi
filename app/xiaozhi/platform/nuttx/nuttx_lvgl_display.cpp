@@ -261,6 +261,10 @@ private:
         return BspTestType::kCamera;
       case BSP_TEST_DNS:
         return BspTestType::kDns;
+      case BSP_TEST_SD_MOUNT:
+        return BspTestType::kSdMount;
+      case BSP_TEST_SD_LIST:
+        return BspTestType::kSdList;
       case BSP_TEST_PING:
       default:
         return BspTestType::kPing;
@@ -277,6 +281,10 @@ private:
         return BSP_TEST_CAMERA;
       case BspTestType::kDns:
         return BSP_TEST_DNS;
+      case BspTestType::kSdMount:
+        return BSP_TEST_SD_MOUNT;
+      case BspTestType::kSdList:
+        return BSP_TEST_SD_LIST;
       case BspTestType::kPing:
       default:
         return BSP_TEST_PING;
