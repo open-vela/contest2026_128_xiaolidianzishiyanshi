@@ -1,0 +1,4 @@
+interface:
+  display_name: "ESP32-P4 Debug"
+  short_description: "ESP32-P4 开发期启动异常、FPU 故障与驱动卡死调试"
+  default_prompt: "Use $esp32p4-debug to diagnose this ESP32-P4 development-time boot or runtime fault."
