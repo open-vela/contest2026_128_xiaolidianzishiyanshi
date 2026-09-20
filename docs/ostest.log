@@ -1,0 +1,1024 @@
+restart_main: argv[3]="Lastly, the 3rd argument"
+restart_main: Variable=VarName has value=VarValue
+restart_main: Exiting
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         4        3
+mxordblk  1da7fb8  1da7fb8
+uordblks   267878   2678b8
+fordblks  1de8738  1de86f8
+
+user_main: waitpid test
+
+Test waitpid()
+waitpid_start_child: Started waitpid_main at PID=31
+waitpid_main: PID 31 Started
+waitpid_start_child: Started waitpid_main at PID=35
+waitpid_main: PID 35 Started
+waitpid_start_child: Started waitpid_main at PID=36
+waitpid_main: PID 36 Started
+waitpid_test: Waiting for PID=31 with waitpid()
+waitpid_main: PID 31 exitting with result=14
+waitpid_test: PID 31 waitpid succeeded with stat_loc=0e00
+waitpid_last: Waiting for PID=36 with waitpid()
+waitpid_main: PID 35 exitting with result=14
+waitpid_main: PID 36 exitting with result=14
+waitpid_last: PASS: PID 36 waitpid succeeded with stat_loc=0e00
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         3        3
+mxordblk  1da7fb8  1da7fb8
+uordblks   2678b8   2678b8
+fordblks  1de86f8  1de86f8
+
+user_main: wqueue test
+wqueue_test: HPWORK
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: HPWORK done
+wqueue_test: LPWORK
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: HPWORK done
+wqueue_test: test 1
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: test 1 done
+wqueue_test: test 2
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: call = 20, expect = 20
+wqueue_test: test 2 done
+
+wqueue_test: periodic work and cancel test start...
+Testing 5 periodic work
+[Pass] Periodic work 0: expected period: 2,      actual period: 2
+[Pass] Periodic work 1: expected period: 3,      actual period: 3
+[Pass] Periodic work 2: expected period: 4,      actual period: 4
+[Pass] Periodic work 3: expected period: 5,      actual period: 5
+[Pass] Periodic work 4: expected period: 6,      actual period: 6
+cnt_prev: 48, cnt_curr: 48
+Passed 5/5
+wqueue_test: periodic work and cancel test done
+
+wqueue_test: recursive work test start...
+Expect works: 40, actual works: 40
+wqueue_test: recursive work test done.
+
+wqueue_test: multiple threads and queues test start
+Current thread priority: 150
+wqueue_test: delay test
+Threads' Priorities:{5} [ 148 149 150 151 152 ]
+Work Queues' Priorities:{3} [ 149 150 151 ]
+Delays:{20} [ 330 82 127 235 386 300 293 165 478 257 300 130 99 487 422 227 324 101 78 450 ]
+Waiting for all works to finish... timeout_cnt:3200/2147483647  done
+Work[  0] in [0] [    Passed] added at 6811, qtime expected: 7142       actual:7142      ,    
+Work[  1] in [0] [    Passed] added at 6811, qtime expected: 6894       actual:6894      ,    
+Work[  2] in [0] [    Passed] added at 6811, qtime expected: 6939       actual:6939      ,    
+Work[  3] in [0] [    Passed] added at 6811, qtime expected: 7047       actual:7047      ,    
+Work[  4] in [0] [    Passed] added at 6811, qtime expected: 7198       actual:7198      ,    
+Work[  5] in [1] [    Passed] added at 6912, qtime expected: 7213       actual:7213      ,    
+Work[  6] in [1] [    Passed] added at 6912, qtime expected: 7206       actual:7206      ,    
+Work[  7] in [1] [    Passed] added at 6912, qtime expected: 7078       actual:7078      ,    
+Work[  8] in [1] [    Passed] added at 6912, qtime expected: 7391       actual:7391      ,    
+Work[  9] in [1] [    Passed] added at 6912, qtime expected: 7170       actual:7170      ,    
+Work[ 10] in [2] [    Passed] added at 7013, qtime expected: 7314       actual:7314      ,    
+Work[ 11] in [2] [    Passed] added at 7013, qtime expected: 7144       actual:7144      ,    
+Work[ 12] in [2] [    Passed] added at 7013, qtime expected: 7113       actual:7113      ,    
+Work[ 13] in [2] [    Passed] added at 7013, qtime expected: 7501       actual:7501      ,    
+Work[ 14] in [2] [    Passed] added at 7013, qtime expected: 7436       actual:7436      ,    
+Work[ 15] in [0] [    Passed] added at 7114, qtime expected: 7342       actual:7342      ,    
+Work[ 16] in [0] [    Passed] added at 7114, qtime expected: 7439       actual:7439      ,    
+Work[ 17] in [0] [    Passed] added at 7114, qtime expected: 7216       actual:7216      ,    
+Work[ 18] in [0] [    Passed] added at 7114, qtime expected: 7193       actual:7193      ,    
+Work[ 19] in [0] [    Passed] added at 7114, qtime expected: 7565       actual:7565      ,    
+wqueue_test: delay test: Total=20, Success=20, Invalid=0, Warning=0, Failed=0, Timeout=0, Une0
+wqueue_test: multiple threads and queues test done
+
+wqueue_test: special delay test start...
+wqueue_test: delay test
+Threads' Priorities:{1} [ 150 ]
+Work Queues' Priorities:{1} [ 150 ]
+Delays:{2} [ 4294967295 1 ]
+Waiting for all works to finish... timeout_cnt:100/2000  done
+Work[  0] in [0] [   Invalid] added at 7590, qtime expected: 0          actual:0         ,    
+Work[  1] in [0] [    Passed] added at 7691, qtime expected: 7693       actual:7693      ,    
+wqueue_test: delay test: Total=2, Success=1, Invalid=1, Warning=0, Failed=0, Timeout=0, Unexp0
+wqueue_test: delay test
+Threads' Priorities:{1} [ 150 ]
+Work Queues' Priorities:{1} [ 150 ]
+Delays:{2} [ 4294967295 1073741823 ]
+Waiting for all works to finish... timeout_cnt:2000/2000  timeout
+Work[  0] in [0] [   Invalid] added at 7805, qtime expected: 0          actual:0         ,    
+Work[  1] in [0] [   Timeout] added at 7906, qtime expected: 1073749730 actual:0         ,    
+wqueue_test: delay test: Total=2, Success=0, Invalid=1, Warning=0, Failed=0, Timeout=1, Unexp0
+wqueue_test: special delay test done.
+
+wqueue_test: work thread test start...
+Thread Num: 4;         Efficiency: 96.34%;          Total time: 474 ticks,          Executions
+wqueue_test: work thread test done
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         3        5
+mxordblk  1da7fb8  1da7fb8
+uordblks   2678b8   267f50
+fordblks  1de86f8  1de8060
+
+user_main: mutex test
+Initializing mutex
+Starting thread 1
+Starting thread 2
+                Thread1 Thread2
+        Loops   32      32
+        Errors  0       0
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         5        5
+mxordblk  1da7fb8  1da7fb8
+uordblks   267f50   267f50
+fordblks  1de8060  1de8060
+
+user_main: timed mutex test
+mutex_test: Initializing mutex
+mutex_test: Starting thread
+pthread:  Started
+pthread:  Waiting for lock or timeout
+mutex_test: Unlocking
+pthread:  Got the lock
+pthread:  Waiting for lock or timeout
+pthread:  Got the lock
+pthread:  Waiting for lock or timeout
+pthread:  Got the lock
+pthread:  Waiting for lock or timeout
+pthread:  Got the lock
+pthread:  Waiting for lock or timeout
+pthread:  Got the lock
+pthread:  Waiting for lock or timeout
+pthread:  Got the lock
+pthread:  Waiting for lock or timeout
+pthread:  Got the lock
+pthread:  Waiting for lock or timeout
+pthread:  Got the lock
+pthread:  Waiting for lock or timeout
+pthread:  Got the lock
+mutex_test: Re-locking
+pthread:  Waiting for lock or timeout
+pthread:  Got the timeout.  Terminating
+mutex_test: PASSED
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         5        5
+mxordblk  1da7fb8  1da7fb8
+uordblks   267f50   267f50
+fordblks  1de8060  1de8060
+
+user_main: recursive mutex test
+recursive_mutex_test: Initializing mutex
+recursive_mutex_test: Starting thread 1
+recursive_mutex_test: Starting thread 2
+recursive_mutex_test: Starting thread 3
+thread_outer[1]: Started
+thread_outer[2]: Started
+recursive_mutex_test: Waiting for thread 1
+thread_outer[1]: Loop 0
+thread_outer[3]: Started
+thread_outer[2]: Loop 0
+thread_inner[1, 0]: Locking
+thread_outer[3]: Loop 0
+thread_inner[2, 0]: Locking
+thread_inner[1, 0]: Locked
+thread_inner[3, 0]: Locking
+thread_inner[1, 1]: Locking
+thread_inner[1, 1]: Locked
+thread_inner[1, 2]: Locking
+thread_inner[1, 2]: Locked
+thread_inner[1, 2]: Unlocking
+thread_inner[1, 2]: Unlocked
+thread_inner[1, 1]: Unlocking
+thread_inner[1, 1]: Unlocked
+thread_inner[1, 0]: Unlocking
+thread_inner[1, 0]: Unlocked
+thread_inner[2, 0]: Locked
+thread_outer[1]: Loop 1
+thread_inner[1, 0]: Locking
+thread_inner[2, 1]: Locking
+thread_inner[2, 1]: Locked
+thread_inner[2, 2]: Locking
+thread_inner[2, 2]: Locked
+thread_inner[2, 2]: Unlocking
+thread_inner[2, 2]: Unlocked
+thread_inner[2, 1]: Unlocking
+thread_inner[2, 1]: Unlocked
+thread_inner[2, 0]: Unlocking
+thread_inner[2, 0]: Unlocked
+thread_inner[3, 0]: Locked
+thread_outer[2]: Loop 1
+thread_inner[2, 0]: Locking
+thread_inner[3, 1]: Locking
+thread_inner[3, 1]: Locked
+thread_inner[3, 2]: Locking
+thread_inner[3, 2]: Locked
+thread_inner[3, 2]: Unlocking
+thread_inner[3, 2]: Unlocked
+thread_inner[3, 1]: Unlocking
+thread_inner[3, 1]: Unlocked
+thread_inner[3, 0]: Unlocking
+thread_inner[3, 0]: Unlocked
+thread_inner[1, 0]: Locked
+thread_outer[3]: Loop 1
+thread_inner[1, 1]: Locking
+thread_inner[3, 0]: Locking
+thread_inner[1, 1]: Locked
+thread_inner[1, 2]: Locking
+thread_inner[1, 2]: Locked
+thread_inner[1, 2]: Unlocking
+thread_inner[1, 2]: Unlocked
+thread_inner[1, 1]: Unlocking
+thread_inner[1, 1]: Unlocked
+thread_inner[1, 0]: Unlocking
+thread_inner[1, 0]: Unlocked
+thread_inner[2, 0]: Locked
+thread_outer[1]: Loop 2
+thread_inner[1, 0]: Locking
+thread_inner[2, 1]: Locking
+thread_inner[2, 1]: Locked
+thread_inner[2, 2]: Locking
+thread_inner[2, 2]: Locked
+thread_inner[2, 2]: Unlocking
+thread_inner[2, 2]: Unlocked
+thread_inner[2, 1]: Unlocking
+thread_inner[2, 1]: Unlocked
+thread_inner[2, 0]: Unlocking
+thread_inner[2, 0]: Unlocked
+thread_inner[3, 0]: Locked
+thread_outer[2]: Loop 2
+thread_inner[2, 0]: Locking
+thread_inner[3, 1]: Locking
+thread_inner[3, 1]: Locked
+thread_inner[3, 2]: Locking
+thread_inner[3, 2]: Locked
+thread_inner[3, 2]: Unlocking
+thread_inner[3, 2]: Unlocked
+thread_inner[3, 1]: Unlocking
+thread_inner[3, 1]: Unlocked
+thread_inner[3, 0]: Unlocking
+thread_inner[3, 0]: Unlocked
+thread_inner[1, 0]: Locked
+thread_outer[3]: Loop 2
+thread_inner[3, 0]: Locking
+thread_inner[1, 1]: Locking
+thread_inner[1, 1]: Locked
+thread_inner[1, 2]: Locking
+thread_inner[1, 2]: Locked
+thread_inner[1, 2]: Unlocking
+thread_inner[1, 2]: Unlocked
+thread_inner[1, 1]: Unlocking
+thread_inner[1, 1]: Unlocked
+thread_inner[1, 0]: Unlocking
+thread_inner[1, 0]: Unlocked
+thread_inner[2, 0]: Locked
+thread_outer[1]: Exiting
+thread_inner[2, 1]: Locking
+thread_inner[2, 1]: Locked
+recursive_mutex_test: Waiting for thread 2
+thread_inner[2, 2]: Locking
+thread_inner[2, 2]: Locked
+thread_inner[2, 2]: Unlocking
+thread_inner[2, 2]: Unlocked
+thread_inner[2, 1]: Unlocking
+thread_inner[2, 1]: Unlocked
+thread_inner[2, 0]: Unlocking
+thread_inner[2, 0]: Unlocked
+thread_inner[3, 0]: Locked
+thread_outer[2]: Exiting
+thread_inner[3, 1]: Locking
+thread_inner[3, 1]: Locked
+recursive_mutex_test: Waiting for thread 3
+thread_inner[3, 2]: Locking
+thread_inner[3, 2]: Locked
+thread_inner[3, 2]: Unlocking
+thread_inner[3, 2]: Unlocked
+thread_inner[3, 1]: Unlocking
+thread_inner[3, 1]: Unlocked
+thread_inner[3, 0]: Unlocking
+thread_inner[3, 0]: Unlocked
+thread_outer[3]: Exiting
+recursive_mutex_test: Complete
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         5        5
+mxordblk  1da7fb8  1da7fb8
+uordblks   267f50   267f50
+fordblks  1de8060  1de8060
+
+user_main: pthread-specific data test
+Starting thread
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         5        5
+mxordblk  1da7fb8  1da7fb8
+uordblks   267f50   267f50
+fordblks  1de8060  1de8060
+
+user_main: cancel test
+cancel_test: Test 1a: Normal Cancellation
+cancel_test: Starting thread
+start_thread: Initializing mutex
+start_thread: Initializing cond
+start_thread: Parent thread priority=150
+start_thread: Starting thread
+start_thread: Yielding
+sem_waiter: Taking mutex
+sem_waiter: Starting wait for condition
+cancel_test: Canceling thread
+cancel_test: Joining
+cancel_test: waiter exited with result=0xffffffff
+cancel_test: PASS thread terminated with PTHREAD_CANCELED
+cancel_test: Test 2: Asynchronous Cancellation
+... Skipped
+cancel_test: Test 3: Cancellation of detached thread
+cancel_test: Re-starting thread
+restart_thread: Destroying cond
+restart_thread: Destroying mutex
+restart_thread: Re-starting thread
+start_thread: Initializing mutex
+start_thread: Initializing cond
+start_thread: Parent thread priority=150
+start_thread: Starting thread
+start_thread: Yielding
+sem_waiter: Taking mutex
+sem_waiter: Starting wait for condition
+cancel_test: Canceling thread
+cancel_test: Joining
+cancel_test: PASS pthread_join failed with status=ESRCH or EINVAL
+cancel_test: Test 5: Non-cancelable threads
+cancel_test: Re-starting thread (non-cancelable)
+restart_thread: Destroying cond
+restart_thread: Destroying mutex
+restart_thread: Re-starting thread
+start_thread: Initializing mutex
+start_thread: Initializing cond
+start_thread: Parent thread priority=150
+start_thread: Starting thread
+start_thread: Yielding
+sem_waiter: Taking mutex
+sem_waiter: Starting wait for condition
+sem_waiter: Setting non-cancelable
+cancel_test: Canceling thread
+cancel_test: Joining
+sem_waiter: Releasing mutex
+sem_waiter: Setting cancelable
+cancel_test: waiter exited with result=0xffffffff
+cancel_test: PASS thread terminated with PTHREAD_CANCELED
+cancel_test: Test 6: Cancel message queue wait
+cancel_test: Starting thread (cancelable)
+Skipped
+cancel_test: Test 7: Cancel signal wait
+cancel_test: Starting thread (cancelable)
+Skipped
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         5        5
+mxordblk  1da7fb8  1da7fb8
+uordblks   267f50   267f50
+fordblks  1de8060  1de8060
+
+user_main: robust test
+robust_test: Initializing mutex
+robust_test: Starting thread
+robust_waiter: Taking mutex
+robust_waiter: Wake parent start wait mutex
+robust_waiter: Exiting with mutex locked
+robust_test: Take the lock again
+robust_test: Make the mutex consistent again.
+robust_test: Take the lock again
+robust_test: Joining
+robust_test: waiter exited with result=0
+robust_test: Test complete with nerrors=0
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         5        5
+mxordblk  1da7fb8  1da7fb8
+uordblks   267f50   267f50
+fordblks  1de8060  1de8060
+
+user_main: semaphore test
+sem_test: Initializing semaphore to 0
+sem_test: Starting waiter thread 1
+sem_test: Set thread 1 priority to 160
+waiter_func: Thread 1 Started
+waiter_func: Thread 1 initial semaphore value = 0
+sem_test: Starting waiter thread 2
+waiter_func: Thread 1 waiting on semaphore
+sem_test: Set thread 2 priority to 150
+waiter_func: Thread 2 Started
+waiter_func: Thread 2 initial semaphore value = -1
+waiter_func: Thread 2 waiting on semaphore
+sem_test: Starting poster thread 3
+sem_test: Set thread 3 priority to 140
+poster_func: Thread 3 started
+poster_func: Thread 3 semaphore value = -2
+poster_func: Thread 3 posting semaphore
+waiter_func: Thread 1 awakened
+waiter_func: Thread 1 new semaphore value = -1
+waiter_func: Thread 1 done
+poster_func: Thread 3 new semaphore value = -1
+poster_func: Thread 3 semaphore value = -1
+poster_func: Thread 3 posting semaphore
+waiter_func: Thread 2 awakened
+waiter_func: Thread 2 new semaphore value = 0
+waiter_func: Thread 2 done
+poster_func: Thread 3 new semaphore value = 0
+poster_func: Thread 3 done
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         5        5
+mxordblk  1da7fb8  1da7fb8
+uordblks   267f50   267f50
+fordblks  1de8060  1de8060
+
+user_main: timed semaphore test
+semtimed_test: Initializing semaphore to 0
+semtimed_test: Waiting for two second timeout
+semtimed_test: PASS: first test returned timeout
+BEFORE: (95 sec, 390000000 nsec)
+AFTER:  (97 sec, 390000000 nsec)
+semtimed_test: Starting poster thread
+semtimed_test: Set thread 1 priority to 160
+poster_func: Waiting for 10 ms
+semtimed_test: Starting poster thread 3
+semtimed_test: Set low priority thread to 140
+semtimed_test: Waiting for two second timeout
+poster_func: Waiting for 10 ms
+poster_func: Posting
+semtimed_test: PASS: sem_timedwait succeeded
+BEFORE: (97 sec, 390000000 nsec)
+AFTER:  (97 sec, 410000000 nsec)
+poster_func: Posting
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         5        5
+mxordblk  1da7fb8  1da7fb8
+uordblks   267f50   267f50
+fordblks  1de8060  1de8060
+
+user_main: condition variable test
+cond_test: Initializing mutex
+cond_test: Initializing cond
+cond_test: Starting waiter
+cond_test: Set thread 1 priority to 160
+waiter_thread: Started
+cond_test: Starting signaler
+cond_test: Set thread 2 priority to 140
+thread_signaler: Started
+thread_signaler: Terminating
+cond_test: signaler terminated, now cancel the waiter
+cond_test:      Waiter  Signaler
+cond_test: Loops        32      32
+cond_test: Errors       0       0
+cond_test:
+cond_test: 0 times, waiter did not have to wait for data
+cond_test: 0 times, data was already available when the signaler run
+cond_test: 0 times, the waiter was in an unexpected state when the signaler ran
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         5        5
+mxordblk  1da7fb8  1da7fb8
+uordblks   267f50   267f50
+fordblks  1de8060  1de8060
+
+user_main: pthread_exit() test
+pthread_exit_test: Started pthread_exit_main at PID=867
+pthread_exit_main 867: Starting pthread_exit_thread
+pthread_exit_main 867: Sleeping for 50 ms
+pthread_exit_thread 868: Sleeping for 100 ms
+pthread_exit_thread 868: Still running...
+pthread_exit_main 867: Calling pthread_exit()
+pthread_exit_thread 868: Exiting
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         5        5
+mxordblk  1da7fb8  1da7fb8
+uordblks   267f50   267f60
+fordblks  1de8060  1de8050
+
+user_main: pthread_rwlock test
+pthread_rwlock: Initializing rwlock
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         5        5
+mxordblk  1da7fb8  1da7fb8
+uordblks   267f60   267f60
+fordblks  1de8050  1de8050
+
+user_main: pthread_rwlock_cancel test
+pthread_rwlock_cancel: Starting test
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         5        5
+mxordblk  1da7fb8  1da7fb8
+uordblks   267f60   267f60
+fordblks  1de8050  1de8050
+
+user_main: timed wait test
+thread_waiter: Initializing mutex
+timedwait_test: Initializing cond
+timedwait_test: Starting waiter
+timedwait_test: Set thread 2 priority to 202
+thread_waiter: Taking mutex
+timedwait_test: Joining
+thread_waiter: Starting 1 second wait for condition
+thread_waiter: pthread_cond_timedwait timed out
+thread_waiter: Releasing mutex
+thread_waiter: Exit with status 0x12345678
+timedwait_test: waiter exited with result=0x12345678
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         5        5
+mxordblk  1da7fb8  1da7fb8
+uordblks   267f60   267f60
+fordblks  1de8050  1de8050
+
+user_main: message queue test
+mqueue_test: Starting receiver
+mqueue_test: Set receiver priority to 160
+receiver_thread: Starting
+mqueue_test: Starting sender
+mqueue_test: Set sender thread priority to 140
+mqueue_test: Waiting for sender to complete
+sender_thread: Starting
+receiver_thread: mq_receive succeeded on msg 0
+sender_thread: mq_send succeeded on msg 0
+receiver_thread: mq_receive succeeded on msg 1
+sender_thread: mq_send succeeded on msg 1
+receiver_thread: mq_receive succeeded on msg 2
+sender_thread: mq_send succeeded on msg 2
+receiver_thread: mq_receive succeeded on msg 3
+sender_thread: mq_send succeeded on msg 3
+receiver_thread: mq_receive succeeded on msg 4
+sender_thread: mq_send succeeded on msg 4
+receiver_thread: mq_receive succeeded on msg 5
+sender_thread: mq_send succeeded on msg 5
+receiver_thread: mq_receive succeeded on msg 6
+sender_thread: mq_send succeeded on msg 6
+receiver_thread: mq_receive succeeded on msg 7
+sender_thread: mq_send succeeded on msg 7
+receiver_thread: mq_receive succeeded on msg 8
+sender_thread: mq_send succeeded on msg 8
+receiver_thread: mq_receive succeeded on msg 9
+sender_thread: mq_send succeeded on msg 9
+sender_thread: returning nerrors=0
+mqueue_test: Killing receiver
+mqueue_test: Canceling receiver
+mqueue_test: receiver has already terminated
+mqueue_test: receiver mqd_t left open
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         5        6
+mxordblk  1da7fb8  1da7fb8
+uordblks   267f60   268018
+fordblks  1de8050  1de7f98
+
+user_main: timed message queue test
+timedmqueue_test: Starting sender
+timedmqueue_test: Waiting for sender to complete
+sender_thread: Starting
+sender_thread: mq_timedsend succeeded on msg 0
+sender_thread: mq_timedsend succeeded on msg 1
+sender_thread: mq_timedsend succeeded on msg 2
+sender_thread: mq_timedsend succeeded on msg 3
+sender_thread: mq_timedsend succeeded on msg 4
+sender_thread: mq_timedsend succeeded on msg 5
+sender_thread: mq_timedsend succeeded on msg 6
+sender_thread: mq_timedsend succeeded on msg 7
+sender_thread: mq_timedsend succeeded on msg 8
+sender_thread: mq_timedsend 9 timed out as expected
+sender_thread: returning nerrors=0
+timedmqueue_test: Starting receiver
+timedmqueue_test: Waiting for receiver to complete
+receiver_thread: Starting
+receiver_thread: mq_timedreceive succeed on msg 0
+receiver_thread: mq_timedreceive succeed on msg 1
+receiver_thread: mq_timedreceive succeed on msg 2
+receiver_thread: mq_timedreceive succeed on msg 3
+receiver_thread: mq_timedreceive succeed on msg 4
+receiver_thread: mq_timedreceive succeed on msg 5
+receiver_thread: mq_timedreceive succeed on msg 6
+receiver_thread: mq_timedreceive succeed on msg 7
+receiver_thread: mq_timedreceive succeed on msg 8
+receiver_thread: Receive 9 timed out as expected
+receiver_thread: returning nerrors=0
+timedmqueue_test: Test complete
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         6        6
+mxordblk  1da7fb8  1da7fb8
+uordblks   268018   268018
+fordblks  1de7f98  1de7f98
+
+user_main: sigprocmask test
+sigprocmask_test: SUCCESS
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         6        6
+mxordblk  1da7fb8  1da7fb8
+uordblks   268018   268018
+fordblks  1de7f98  1de7f98
+
+user_main: signal handler test
+sighand_test: Initializing semaphore to 0
+sighand_test: Starting waiter task
+sighand_test: Started waiter_main pid=890
+waiter_main: Waiter started
+waiter_main: Unmasking signal 32
+waiter_main: Registering signal handler
+waiter_main: oact.sigaction=0 oact.sa_flags=0 oact.sa_mask=0000000000000000
+waiter_main: Waiting on semaphore
+sighand_test: Signaling pid=890 with signo=32 sigvalue=42
+waiter_main: sem_wait() successfully interrupted by signal
+waiter_main: done
+sighand_test: done
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         6        6
+mxordblk  1da7fb8  1da7fb8
+uordblks   268018   268028
+fordblks  1de7f98  1de7f88
+
+user_main: nested signal handler test
+signest_test: Starting signal waiter task at priority 151
+waiter_main: Waiter started
+waiter_main: Setting signal mask
+waiter_main: Registering signal handler
+signest_test: Started waiter_main pid=891
+waiter_main: Waiting on semaphore
+signest_test: Starting interfering task at priority 152
+interfere_main: Waiting on semaphore
+signest_test: Started interfere_main pid=892
+signest_test: Simple case:
+  Total signalled 1240  Odd=620 Even=620
+  Total handled   1240  Odd=620 Even=620
+  Total nested    0    Odd=0   Even=0  
+signest_test: With task locking
+  Total signalled 2480  Odd=1240 Even=1240
+  Total handled   2480  Odd=1240 Even=1240
+  Total nested    0    Odd=0   Even=0  
+signest_test: With intefering thread
+  Total signalled 3720  Odd=1860 Even=1860
+  Total handled   3720  Odd=1860 Even=1860
+  Total nested    0    Odd=0   Even=0  
+signest_test: done
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         6        6
+mxordblk  1da7fb8  1da7fb8
+uordblks   268028   268788
+fordblks  1de7f88  1de7828
+
+user_main: spinlock test
+Start Lock test:
+Thread num: 1, Loop times: 10000000
+
+Test type: spinlock
+spinlock: Test Results:
+spinlock: Final counter: 10000000
+spinlock: Average throughput : 18181818 op/s
+spinlock: Total execution time: 550000000 ns
+ 
+Test type: rspinlock
+rspinlock: Test Results:
+rspinlock: Final counter: 10000000
+rspinlock: Average throughput : 10526315 op/s
+rspinlock: Total execution time: 950000000 ns
+ 
+Test type: seqcount
+seqcount: Test Results:
+seqcount: Final counter: 10000000
+seqcount: Average throughput : 15384615 op/s
+seqcount: Total execution time: 650000000 ns
+ 
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         6        6
+mxordblk  1da7fb8  1da7fb8
+uordblks   268788   268788
+fordblks  1de7828  1de7828
+
+user_main: wdog test
+wdog_test start...
+wdtest_once 0 ns
+wdtest_once 0 ns
+wdtest_once 1 ns
+wdtest_once 1 ns
+wdtest_once 10 ns
+wdtest_once 10 ns
+wdtest_once 100 ns
+wdtest_once 100 ns
+wdtest_once 1000 ns
+wdtest_once 1000 ns
+wdtest_once 10000 ns
+wdtest_once 10000 ns
+wdtest_once 100000 ns
+wdtest_once 100000 ns
+wdtest_once 1000000 ns
+wdtest_once 1000000 ns
+wd_start with maximum delay, cancel OK, rest 1073741822
+wdtest_recursive 1000000ns
+wd_start with maximum delay, cancel OK, rest 1073741822
+wdtest_recursive 1000000ns
+recursive wdog triggered 6 times, elapsed tick 12
+wdtest_recursive 10000000ns
+recursive wdog triggered 6 times, elapsed tick 12
+wdtest_recursive 10000000ns
+recursive wdog triggered 6 times, elapsed tick 12
+recursive wdog triggered 6 times, elapsed tick 12
+wdog_test end...
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         6        6
+mxordblk  1da7fb8  1da7fb8
+uordblks   268788   268788
+fordblks  1de7828  1de7828
+
+user_main: POSIX timer test
+timer_test: Initializing semaphore to 0
+timer_test: Unmasking signal 32
+timer_test: Registering signal handler
+timer_test: oact.sigaction=0x40079176 oact.sa_flags=0 oact.sa_mask=2aaaaaaaaaaaaaaa
+timer_test: Creating timer
+timer_test: Starting timer
+timer_test: Waiting on semaphore
+timer_test: sem_wait() successfully interrupted by signal
+timer_test: g_nsigreceived=1
+timer_test: Waiting on semaphore
+timer_test: sem_wait() successfully interrupted by signal
+timer_test: g_nsigreceived=2
+timer_test: Waiting on semaphore
+timer_test: sem_wait() successfully interrupted by signal
+timer_test: g_nsigreceived=3
+timer_test: Deleting timer
+timer_test: done
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         6        7
+mxordblk  1da7fb8  1da7fb8
+uordblks   268788   268768
+fordblks  1de7828  1de7848
+
+user_main: round-robin scheduler test
+rr_test: Set thread priority to 150
+rr_test: Set thread policy to SCHED_RR
+rr_test: Starting first get_primes_thread
+         First get_primes_thread: 911
+rr_test: Starting second get_primes_thread
+         Second get_primes_thread: 912
+rr_test: Waiting for threads to complete -- this should take awhile
+         If RR scheduling is working, they should start and complete at
+         about the same time
+get_primes_thread id=1 started, looking for primes < 30000, doing 10 run(s)
+get_primes_thread id=2 started, looking for primes < 30000, doing 10 run(s)
+get_primes_thread id=1 finished, found 3246 primes, last one was 29989
+get_primes_thread id=2 finished, found 3246 primes, last one was 29989
+rr_test: Done
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         7        7
+mxordblk  1da7fb8  1da7fb8
+uordblks   268768   268768
+fordblks  1de7848  1de7848
+
+user_main: barrier test
+barrier_test: Initializing barrier
+barrier_test: Thread 0 created
+barrier_test: Thread 1 created
+barrier_test: Thread 2 created
+barrier_test: Thread 3 created
+barrier_func: Thread 0 started
+barrier_func: Thread 1 started
+barrier_func: Thread 2 started
+barrier_func: Thread 3 started
+barrier_test: Thread 4 created
+barrier_func: Thread 4 started
+barrier_test: Thread 5 created
+barrier_func: Thread 5 started
+barrier_test: Thread 6 created
+barrier_func: Thread 6 started
+barrier_test: Thread 7 created
+barrier_func: Thread 7 started
+barrier_func: Thread 0 calling pthread_barrier_wait()
+barrier_func: Thread 1 calling pthread_barrier_wait()
+barrier_func: Thread 2 calling pthread_barrier_wait()
+barrier_func: Thread 3 calling pthread_barrier_wait()
+barrier_func: Thread 4 calling pthread_barrier_wait()
+barrier_func: Thread 5 calling pthread_barrier_wait()
+barrier_func: Thread 6 calling pthread_barrier_wait()
+barrier_func: Thread 7 calling pthread_barrier_wait()
+barrier_func: Thread 7, back with status=PTHREAD_BARRIER_SERIAL_THREAD (I AM SPECIAL)
+barrier_func: Thread 0, back with status=0 (I am not special)
+barrier_func: Thread 1, back with status=0 (I am not special)
+barrier_func: Thread 2, back with status=0 (I am not special)
+barrier_func: Thread 3, back with status=0 (I am not special)
+barrier_func: Thread 4, back with status=0 (I am not special)
+barrier_func: Thread 5, back with status=0 (I am not special)
+barrier_func: Thread 6, back with status=0 (I am not special)
+barrier_func: Thread 7 done
+barrier_func: Thread 0 done
+barrier_func: Thread 1 done
+barrier_func: Thread 2 done
+barrier_test: Thread 0 completed with result=0
+barrier_test: Thread 1 completed with result=0
+barrier_test: Thread 2 completed with result=0
+barrier_func: Thread 3 done
+barrier_func: Thread 4 done
+barrier_test: Thread 3 completed with result=0
+barrier_test: Thread 4 completed with result=0
+barrier_func: Thread 5 done
+barrier_func: Thread 6 done
+barrier_test: Thread 5 completed with result=0
+barrier_test: Thread 6 completed with result=0
+barrier_test: Thread 7 completed with result=0
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         7        7
+mxordblk  1da7fb8  1da7fb8
+uordblks   268768   268768
+fordblks  1de7848  1de7848
+
+user_main: scheduler lock test
+sched_lock: Starting lowpri_thread at 147
+sched_lock: Set lowpri_thread priority to 147
+sched_lock: Starting highpri_thread at 148
+sched_lock: Set highpri_thread priority to 148
+sched_lock: Waiting...
+sched_lock: PASSED No pre-emption occurred while scheduler was locked.
+sched_lock: Starting lowpri_thread at 147
+sched_lock: Set lowpri_thread priority to 147
+sched_lock: Starting highpri_thread at 148
+sched_lock: Set highpri_thread priority to 148
+sched_lock: Waiting...
+sched_lock: PASSED No pre-emption occurred while scheduler was locked.
+sched_lock: Finished
+
+End of test memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         7        7
+mxordblk  1da7fb8  1da7fb8
+uordblks   268768   268768
+fordblks  1de7848  1de7848
+
+user_main: vfork() test
+vfork_test: Child 925 ran successfully
+
+Final memory usage:
+VARIABLE  BEFORE   AFTER
+======== ======== ========
+arena     204ffb0  204ffb0
+ordblks         2        7
+mxordblk  1da7fb8  1da7fb8
+uordblks   267918   268768
+fordblks  1de8698  1de7848
+user_main: Exiting
+ostest_main: Exiting with status 0

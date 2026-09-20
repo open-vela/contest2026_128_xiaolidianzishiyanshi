@@ -2,23 +2,26 @@
 
 配置：
 ```bash
-./build.sh vendor/espressif/boards/esp32p4/esp32p4-function-ev-board/configs/nsh/ --cmake menuconfig
+./build.sh vendor/espressif/boards/esp32p4/esp32p4-function-ev-board/configs/xiaozhi/ --cmake menuconfig
 ```
 
 编译：
 ```bash
-./build.sh vendor/espressif/boards/esp32p4/esp32p4-function-ev-board/configs/nsh/ --cmake -j$(nproc)
+./build.sh vendor/espressif/boards/esp32p4/esp32p4-function-ev-board/configs/xiaozhi/ --cmake -j$(nproc)
 ```
 
 如果改了CMakeLists.txt，可能需要重新编译：
 ```bash
-rm -rf cmake_out/esp32p4-function-ev-board_nsh/ && ./build.sh vendor/espressif/boards/esp32p4/esp32p4-function-ev-board/configs/nsh/ --cmake -j$(nproc)
+rm -rf cmake_out/esp32p4-function-ev-board_xiaozhi/ && ./build.sh vendor/espressif/boards/esp32p4/esp32p4-function-ev-board/configs/xiaozhi/ --cmake -j$(nproc)
 ```
 
 烧录：
 ```bash
-ESPTOOL_PORT=/dev/ttyACM0 cmake --build cmake_out/esp32p4-function-ev-board_nsh --target flash
+export PATH=$(pwd)/prebuilts/gcc/linux-x86_64/riscv-none-elf/bin/:$PATH
+ESPTOOL_PORT=/dev/ttyACM0 cmake --build cmake_out/esp32p4-function-ev-board_xiaozhi --target flash
 ```
+
+烧录后，需要通过串口（板上GPIO37接RXD、GPIO38接TXD）进入nsh（USB JTAG无法接收输入）。
 
 ## 指定本地esp-hal-3rdpary
 
