@@ -36,9 +36,15 @@
 - 除非用户明确要求，否则不要提交代码或暂存代码。
 - 每次调试前重新读取当前 defconfig、`.config`、ELF 和链接结果，不依赖旧会话结论。
 - 未经明确要求不要修改 defconfig；临时配置实验应说明并保留可恢复路径。
-- 直接运行 `cmake`/`cmake --build` 前，必须先执行 `export PATH=/home/lxy/openvela/prebuilts/gcc/linux-x86_64/riscv-none-elf/bin/:$PATH`，确保使用 OpenVela 指定的 RISC-V 工具链，避免误用编译器或触发 `zifencei` 扩展问题；通过 `build.sh` 构建时无需额外设置该环境变量。
+- 禁止通过任何命令、构建目标或配置工具重新生成 `.config`（包括 `configure.sh`、Kconfig 的 refresh/reconfigure/olddefconfig 等流程）；需要调整构建配置时，只能直接编辑现有 `.config`，向其中追加配置或修改已有配置，不依赖自动工具生成。
+- 直接运行 `cmake`/`cmake --build` 前，必须准备下面的临时构建环境。把 ccache 数据和临时文件切到 `/tmp`，可避免工作区沙箱权限问题；把 OpenVela 工具链、构建工具和用户级 `esptool` 加入 `PATH`，可避免误用编译器、触发 `zifencei` 扩展问题或在 `nuttx_post_build` 阶段找不到 `esptool`。通过 `build.sh` 构建时无需额外设置这些变量。
+  ```sh
+  mkdir -p /tmp/openvela-ccache /tmp/openvela-ccache-tmp
+  export CCACHE_DIR=/tmp/openvela-ccache
+  export CCACHE_TEMPDIR=/tmp/openvela-ccache-tmp
+  export PATH=/home/lxy/.local/bin:/home/lxy/openvela/prebuilts/gcc/linux-x86_64/riscv-none-elf/bin:/home/lxy/openvela/prebuilts/build-tools/linux-x86_64/bin:$PATH
+  ```
 - 增量构建：`cmake --build /home/lxy/openvela/cmake_out/esp32p4-function-ev-board_nsh -j8`
-- 修改 defconfig 后重新配置：`cmake --build /home/lxy/openvela/cmake_out/esp32p4-function-ev-board_nsh --target reconfigure`
 - 可使用串口工具烧录，也可在用户已启动 OpenOCD 时通过 GDB/OpenOCD 下载；烧录和调试必须使用同一次构建生成的 ELF/镜像。
 - 用户负责串口、OpenOCD 或板卡电源时，不擅自重启服务或执行物理复位；需要时停下来请用户操作。
 - 串口停止不等于 CPU 卡死；先通过 GDB 检查双核 PC、寄存器、任务状态和异常现场。
