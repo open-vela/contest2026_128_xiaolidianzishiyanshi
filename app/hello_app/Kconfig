@@ -9,6 +9,39 @@ config LVX_USE_DEMO_CONTEST2026_000_HELLO_APP
 	---help---
 		Enable the contest 2026 team 000 hello app demo.
 
+config LVX_USE_DEMO_CONTEST2026_128_WSS_TEST
+	bool "Contest 2026 team 128 secure WebSocket test"
+	default n
+	depends on NET_TCP
+	depends on NET_TCPPROTO_OPTIONS
+	select LIBUV
+	select CRYPTO_MBEDTLS
+	select OPENSSL_MBEDTLS_WRAPPER
+	select NETUTILS_LIBWEBSOCKETS
+	---help---
+		Build the wss_test NSH command.  It isolates DNS, TCP, TLS and the
+		WebSocket HTTP Upgrade from the XiaoZhi application.
+
+if LVX_USE_DEMO_CONTEST2026_128_WSS_TEST
+
+config CONTEST2026_128_WSS_TEST_URL
+	string "Secure WebSocket URL"
+	default "wss://api.tenclass.net/xiaozhi/v1/"
+
+config CONTEST2026_128_WSS_TEST_TIMEOUT
+	int "Connection timeout in seconds"
+	range 3 120
+	default 15
+
+config CONTEST2026_128_WSS_TEST_TLS_ALLOW_INSECURE
+	bool "Allow unverified TLS for board bring-up"
+	default n
+	help
+		Disable certificate and hostname verification.  Use only to isolate
+		transport bring-up before a CA bundle is provisioned.
+
+endif
+
 config LVX_USE_DEMO_CONTEST2026_128_LCD_TEST
 	bool "Contest 2026 team 128 LCD test"
 	default n
