@@ -1,4 +1,6 @@
 #include "wifi_ui.h"
+#include "src/font/lv_font.h"
+#include "src/font/lv_symbol_def.h"
 #include "xiaozhi_font.h"
 
 #include <stdio.h>
@@ -240,8 +242,8 @@ wifi_ui_t *wifi_ui_create(lv_obj_t *parent) {
   lv_obj_align(info, LV_ALIGN_TOP_MID, 0, 0);
 
   lv_obj_t *wifi_icon = lv_label_create(info);
-  lv_obj_set_style_text_font(wifi_icon, &font_awesome_20_4, 0);
-  lv_label_set_text(wifi_icon, WIFI_ICON);
+  lv_obj_set_style_text_font(wifi_icon, &lv_font_montserrat_16, 0);
+  lv_label_set_text(wifi_icon, LV_SYMBOL_WIFI);
   lv_obj_align(wifi_icon, LV_ALIGN_TOP_LEFT, 2, 8);
 
   ui->ssid_label = lv_label_create(info);
@@ -261,8 +263,8 @@ wifi_ui_t *wifi_ui_create(lv_obj_t *parent) {
   lv_obj_align(ui->scan_button, LV_ALIGN_RIGHT_MID, -2, 0);
   lv_obj_add_event_cb(ui->scan_button, scan_event, LV_EVENT_CLICKED, ui);
   lv_obj_t *search_icon = lv_label_create(ui->scan_button);
-  lv_obj_set_style_text_font(search_icon, &font_awesome_20_4, 0);
-  lv_label_set_text(search_icon, SEARCH_ICON);
+  lv_obj_set_style_text_font(search_icon, &lv_font_montserrat_16, 0);
+  lv_label_set_text(search_icon, LV_SYMBOL_REFRESH);
   lv_obj_center(search_icon);
 
   ui->list = lv_obj_create(ui->panel);
@@ -351,18 +353,13 @@ void wifi_ui_set_scan_result(wifi_ui_t *ui, int scanning,
     lv_obj_set_user_data(row, (void *)(uintptr_t)index);
 
     lv_obj_t *icon = lv_label_create(row);
-    lv_obj_set_style_text_font(icon, &font_awesome_20_4, 0);
-    lv_label_set_text(icon, WIFI_ICON);
+    lv_obj_set_style_text_font(icon, &lv_font_montserrat_16, 0);
+    lv_label_set_text(icon, LV_SYMBOL_WIFI);
     lv_obj_t *ssid = lv_label_create(row);
     set_text_font(ssid);
     lv_obj_set_flex_grow(ssid, 1);
     lv_label_set_long_mode(ssid, LV_LABEL_LONG_DOT);
     lv_label_set_text(ssid, ui->networks[index].ssid);
-    if (ui->networks[index].secure) {
-      lv_obj_t *lock = lv_label_create(row);
-      lv_obj_set_style_text_font(lock, &font_awesome_20_4, 0);
-      lv_label_set_text(lock, LOCK_ICON);
-    }
   }
 }
 
