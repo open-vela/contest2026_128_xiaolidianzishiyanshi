@@ -32,7 +32,7 @@
 
 #define EK79007_NAME "ek79007"
 #define EK79007_LANES 2
-#define EK79007_LANE_RATE_MBPS 650
+#define EK79007_LANE_RATE_MBPS 1000
 
 #define EK79007_WIDTH 1024
 #define EK79007_HEIGHT 600
@@ -42,8 +42,8 @@
 #define EK79007_VSYNC 1
 #define EK79007_VBP 23
 #define EK79007_VFP 12
-#define EK79007_BPP 24
-#define EK79007_DPI_CLOCK_MHZ 48
+#define EK79007_BPP 16
+#define EK79007_DPI_CLOCK_MHZ 52
 
 /* Normal framebuffer operation.  BIST is useful for panel diagnostics but
  * masks all pixels produced by LVGL through the MIPI-DPI framebuffer.
@@ -76,7 +76,7 @@ static const struct ek79007_init_cmd_s g_ek79007_init[] = {
   {0xb1, 0x08},
 #endif
   {0x80, 0x8b}, {0x81, 0x78}, {0x82, 0x84}, {0x83, 0x88},
-  {0x84, 0xa8}, {0x85, 0xe3}, {0x86, 0x88}, {0x3a, 0x77},
+  {0x84, 0xa8}, {0x85, 0xe3}, {0x86, 0x88}, {0x3a, 0x55},
 };
 
 /****************************************************************************
@@ -123,7 +123,7 @@ static FAR struct mipi_dsi_device* ek79007_initialize(
   }
 
   device->lanes = EK79007_LANES;
-  device->format = MIPI_DSI_FMT_RGB888;
+  device->format = MIPI_DSI_FMT_RGB565;
   device->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST;
   device->hs_rate = EK79007_LANE_RATE_MBPS * 1000000UL;
   device->lp_rate = 0;
@@ -212,7 +212,7 @@ static const struct esp_mipi_dsi_config_s g_ek79007_config = {
   .vbp = EK79007_VBP,
   .vfp = EK79007_VFP,
   .bpp = EK79007_BPP,
-  .format = MIPI_DSI_FMT_RGB888,
+  .format = MIPI_DSI_FMT_RGB565,
   .dpi_clock_mhz = EK79007_DPI_CLOCK_MHZ,
   .use_test_pattern = false,
   .panel_initialize = ek79007_initialize,

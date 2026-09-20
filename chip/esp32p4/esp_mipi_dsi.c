@@ -101,7 +101,10 @@ struct esp_dsi_s {
   dw_gdma_hal_context_t dma;
   mutex_t lock;
   int dma_cpuint;
+  int bridge_cpuint;
   volatile uint32_t dma_error;
+  volatile uint32_t underrun_count;
+  uint32_t underrun_reported;
   volatile uint8_t current_fb;
   volatile uint8_t pending_fb;
   struct fb_area_s last_update;
@@ -122,6 +125,7 @@ static int esp_dsi_dma_initialize(struct esp_dsi_s* priv);
 static struct esp_dsi_s g_dsi = {
   .lock = NXMUTEX_INITIALIZER,
   .dma_cpuint = -1,
+  .bridge_cpuint = -1,
 };
 
 static dw_gdma_link_list_item_t g_dsi_dma_lli;
@@ -203,18 +207,20 @@ static int esp_dsi_cache_sync_area(uint8_t fb,
   size_t bytes_per_pixel = g_config->bpp / 8;
   size_t stride = (size_t)g_config->width * bytes_per_pixel;
   size_t fb_size = stride * g_config->height;
-  size_t row_len = (size_t)area->w * bytes_per_pixel;
-  uint32_t row;
+
+  /* Match ESP-IDF's DPI/RGB framebuffer path: write back complete contiguous
+   * scan lines rather than an unaligned sub-rectangle per row.  Dirty
+   * rectangles frequently share 64-byte cache lines with adjacent pixels;
+   * one full-line operation is both safer and much cheaper than one cache
+   * operation per row.
+   */
 
   start = (uintptr_t)g_framebuffer + (size_t)fb * fb_size +
-          (size_t)area->y * stride + (size_t)area->x * bytes_per_pixel;
-
-  for (row = 0; row < area->h; row++) {
-    if (esp_cache_msync((void*)(start + row * stride), row_len,
-                        ESP_CACHE_MSYNC_FLAG_DIR_C2M |
-                          ESP_CACHE_MSYNC_FLAG_UNALIGNED) != ESP_OK) {
-      return -EIO;
-    }
+          (size_t)area->y * stride;
+  if (esp_cache_msync((void*)start, (size_t)area->h * stride,
+                      ESP_CACHE_MSYNC_FLAG_DIR_C2M |
+                        ESP_CACHE_MSYNC_FLAG_UNALIGNED) != ESP_OK) {
+    return -EIO;
   }
 
   return OK;
@@ -263,6 +269,14 @@ static int esp_dsi_updatearea(struct fb_vtable_s* vtable,
     syslog(LOG_ERR, "ERROR: MIPI DW-GDMA stopped (status=%08lx)\n",
            (unsigned long)g_dsi.dma_error);
     return -EIO;
+  }
+
+  if (g_dsi.underrun_count != g_dsi.underrun_reported) {
+    g_dsi.underrun_reported = g_dsi.underrun_count;
+    syslog(LOG_WARNING,
+           "WARNING: MIPI DSI bridge underrun count=%lu; "
+           "display DMA was starved by memory traffic\n",
+           (unsigned long)g_dsi.underrun_reported);
   }
 
   return OK;
@@ -576,6 +590,43 @@ static int esp_dsi_dma_interrupt(int irq, void* context, void* arg) {
   return OK;
 }
 
+static int esp_dsi_bridge_interrupt(int irq, void* context, void* arg) {
+  struct esp_dsi_s* priv = arg;
+  uint32_t status;
+
+  (void)irq;
+  (void)context;
+
+  status = mipi_dsi_brg_ll_get_interrupt_status(priv->hal.bridge);
+  mipi_dsi_brg_ll_clear_interrupt_status(priv->hal.bridge, status);
+  if ((status & MIPI_DSI_BRG_LL_EVENT_UNDERRUN) != 0) {
+    priv->underrun_count++;
+  }
+
+  return OK;
+}
+
+static int esp_dsi_bridge_interrupt_initialize(struct esp_dsi_s* priv) {
+  int cpuint;
+
+  sched_lock();
+  cpuint = esp_setup_irq(DSI_BRIDGE_INTR_SOURCE, ESP_IRQ_PRIORITY_DEFAULT,
+                         ESP_IRQ_TRIGGER_LEVEL, esp_dsi_bridge_interrupt,
+                         priv);
+  if (cpuint >= 0) {
+    priv->bridge_cpuint = cpuint;
+    priv->underrun_count = 0;
+    priv->underrun_reported = 0;
+    mipi_dsi_brg_ll_clear_interrupt_status(priv->hal.bridge, UINT32_MAX);
+    mipi_dsi_brg_ll_enable_interrupt(priv->hal.bridge,
+                                     MIPI_DSI_BRG_LL_EVENT_UNDERRUN, true);
+    up_enable_irq(ESP_IRQ_DSI_BRIDGE);
+  }
+
+  sched_unlock();
+  return cpuint < 0 ? cpuint : OK;
+}
+
 static int esp_dsi_dma_initialize(struct esp_dsi_s* priv) {
   dw_gdma_link_list_item_t* lli;
   dw_gdma_dev_t* dma;
@@ -696,6 +747,7 @@ static int esp_dsi_hardware_initialize(struct esp_dsi_s* priv) {
   uint8_t mul;
   bool use_rail;
   uint32_t div;
+  lcd_color_format_t color_format;
   unsigned int n;
   int ret;
 
@@ -856,8 +908,9 @@ static int esp_dsi_hardware_initialize(struct esp_dsi_s* priv) {
 
   mipi_dsi_host_ll_dpi_set_vcid(priv->hal.host, 0);
 
-  mipi_dsi_host_ll_dpi_set_color_coding(priv->hal.host, LCD_COLOR_FMT_RGB888,
-                                        0);
+  color_format = g_config->bpp == 16 ? LCD_COLOR_FMT_RGB565 :
+                                      LCD_COLOR_FMT_RGB888;
+  mipi_dsi_host_ll_dpi_set_color_coding(priv->hal.host, color_format, 0);
   mipi_dsi_host_ll_dpi_set_timing_polarity(priv->hal.host, false, false, false,
                                            false, false);
   mipi_dsi_host_ll_dpi_enable_lp_horizontal_timing(priv->hal.host, true, true);
@@ -879,10 +932,8 @@ static int esp_dsi_hardware_initialize(struct esp_dsi_s* priv) {
   mipi_dsi_brg_ll_set_num_pixel_bits(
     priv->hal.bridge, g_config->width * g_config->height * g_config->bpp);
   mipi_dsi_brg_ll_set_underrun_discard_count(priv->hal.bridge, g_config->width);
-  mipi_dsi_brg_ll_set_input_color_format(priv->hal.bridge,
-                                         LCD_COLOR_FMT_RGB888);
-  mipi_dsi_brg_ll_set_output_color_format(priv->hal.bridge,
-                                          LCD_COLOR_FMT_RGB888, 0);
+  mipi_dsi_brg_ll_set_input_color_format(priv->hal.bridge, color_format);
+  mipi_dsi_brg_ll_set_output_color_format(priv->hal.bridge, color_format, 0);
   mipi_dsi_brg_ll_set_flow_controller(priv->hal.bridge,
                                       MIPI_DSI_LL_FLOW_CONTROLLER_DMA);
   mipi_dsi_brg_ll_set_multi_block_number(priv->hal.bridge, 1);
@@ -890,6 +941,11 @@ static int esp_dsi_hardware_initialize(struct esp_dsi_s* priv) {
   mipi_dsi_brg_ll_set_empty_threshold(priv->hal.bridge, 768);
   mipi_dsi_brg_ll_enable(priv->hal.bridge, true);
   mipi_dsi_brg_ll_update_dpi_config(priv->hal.bridge);
+
+  ret = esp_dsi_bridge_interrupt_initialize(priv);
+  if (ret < 0) {
+    return ret;
+  }
 
   /* This panel is operated entirely in HS video mode.  Its command path does
    * not provide a reliable BTA response, so video must not wait for a frame
@@ -938,9 +994,12 @@ static int esp_dsi_hardware_initialize(struct esp_dsi_s* priv) {
 int esp_mipi_dsi_set_config(const struct esp_mipi_dsi_config_s* config) {
   if (config == NULL || config->lanes == 0 || config->lanes > 2 ||
       config->lane_rate_mbps == 0 || config->width == 0 ||
-      config->height == 0 || config->dpi_clock_mhz == 0 || config->bpp != 24 ||
+      config->height == 0 || config->dpi_clock_mhz == 0 ||
+      (config->bpp != 16 && config->bpp != 24) ||
       ((size_t)config->width * config->height * config->bpp / 8) % 8 != 0 ||
-      config->format != MIPI_DSI_FMT_RGB888 ||
+      (config->format != MIPI_DSI_FMT_RGB565 &&
+       config->format != MIPI_DSI_FMT_RGB888) ||
+      (config->bpp == 16) != (config->format == MIPI_DSI_FMT_RGB565) ||
       config->panel_initialize == NULL || config->backlight == NULL) {
     return -EINVAL;
   }
@@ -954,7 +1013,7 @@ int esp_mipi_dsi_set_config(const struct esp_mipi_dsi_config_s* config) {
   }
 
   g_config = config;
-  g_vinfo.fmt = FB_FMT_RGB24;
+  g_vinfo.fmt = config->bpp == 16 ? FB_FMT_RGB16_565 : FB_FMT_RGB24;
   g_vinfo.xres = config->width;
   g_vinfo.yres = config->height;
   return OK;
