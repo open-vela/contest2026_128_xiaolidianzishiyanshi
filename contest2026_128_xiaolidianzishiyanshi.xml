@@ -11,6 +11,7 @@
 
   <project path="contest2026_128_xiaolidianzishiyanshi" name="contest2026_128_xiaolidianzishiyanshi" remote="fork">
     <linkfile src="app/hello_app" dest="packages/demos/contest2026_128_hello_app"/>
+    <linkfile src="app/xiaozhi" dest="packages/demos/contest2026_128_xiaozhi"/>
     <linkfile src="quickapp/hello_quickapp" dest="packages/apps/contest2026_128_hello_quickapp"/>
     <linkfile src="board/contest_board" dest="vendor/openvela/boards/contest2026_128_board"/>
     <linkfile src="board/esp32p4" dest="vendor/espressif/boards/esp32p4"/>

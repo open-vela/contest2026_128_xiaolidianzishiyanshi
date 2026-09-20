@@ -1,0 +1,172 @@
+config LVX_USE_DEMO_CONTEST2026_128_XIAOZHI
+	bool "Contest 2026 team 128 XiaoZhi AI client"
+	default n
+	depends on LIBCXX
+	depends on AUDIO
+	depends on NET_TCP
+	depends on NET_TCPPROTO_OPTIONS
+	depends on GRAPHICS_LVGL
+	depends on LV_USE_NUTTX
+	depends on LV_USE_NUTTX_LCD || VIDEO_FB
+	select LIB_OPUS
+	select LIB_CURL
+	select NETUTILS_CJSON
+	select LIBUV
+	select CRYPTO_MBEDTLS
+	select OPENSSL_MBEDTLS_WRAPPER
+	select NETUTILS_LIBWEBSOCKETS
+	select WIRELESS_WAPI
+	select NETUTILS_DHCPC
+	select NETUTILS_NETLIB
+	select LV_FONT_SIMSUN_16_CJK
+	---help---
+		Enable the XiaoZhi voice assistant client port.  The application uses
+		only NuttX/POSIX interfaces plus openvela's packaged cJSON, Opus and
+		libwebsockets libraries.
+
+if LVX_USE_DEMO_CONTEST2026_128_XIAOZHI
+
+config CONTEST2026_128_XIAOZHI_PPA
+	bool "Accelerate XiaoZhi LVGL drawing with ESP32-P4 PPA"
+	default y
+	depends on ESP32P4_PPA
+	---help---
+		Register the ESP32-P4 PPA LVGL draw unit before creating the XiaoZhi
+		interface. Unsupported operations continue to use LVGL software drawing.
+
+config CONTEST2026_128_XIAOZHI_PROGNAME
+	string "Program name"
+	default "xiaozhi"
+
+config CONTEST2026_128_XIAOZHI_PRIORITY
+	int "Main task priority"
+	default 100
+
+config CONTEST2026_128_XIAOZHI_STACKSIZE
+	int "Main task stack size"
+	default 32768
+
+config CONTEST2026_128_XIAOZHI_GUI_STACKSIZE
+	int "LVGL worker stack size"
+	range 8192 131072
+	default 16384
+
+config CONTEST2026_128_XIAOZHI_WIFI_STACKSIZE
+	int "WiFi worker stack size"
+	range 4096 32768
+	default 8192
+	help
+		Stack used by the non-blocking WAPI scan/association worker.  The DHCP
+		client creates its own short-lived worker while an address is acquired.
+
+config CONTEST2026_128_XIAOZHI_AUDIO_STACKSIZE
+	int "Audio worker stack size"
+	range 4096 131072
+	default 32768
+	help
+		Stack size used independently by the capture and playback workers.
+		The Opus encoder has individual call frames larger than 11 KiB, so
+		leave enough headroom for its nested analysis and SILK/CELT routines.
+
+config CONTEST2026_128_XIAOZHI_AUDIO_DIAGNOSTICS
+	bool "Enable audio and I2S diagnostic logs"
+	default n
+	help
+		Print the captured PCM peak/mean amplitude, Opus frame/byte counts,
+		and the XiaoZhi audio-domain bring-up trace.  Enable this while
+		diagnosing the audio path, then disable it for normal use.
+
+config CONTEST2026_128_XIAOZHI_CAPTURE_SLOT_COUNT
+	int "Physical I2S capture slots per sample"
+	range 1 2
+	default 2
+	help
+		Number of interleaved 16-bit slots delivered by the NuttX I2S
+		driver for each microphone sample.  ESP32-P4 standard I2S uses two
+		physical slots even though the ES8311 ADC is mono.  The capture
+		adapter selects the active slot before passing 16-kHz mono PCM to
+		Opus.  Use 1 only for a lower half that already returns mono PCM.
+
+config CONTEST2026_128_XIAOZHI_WEBSOCKET_STACKSIZE
+	int "WebSocket/TLS worker stack size"
+	range 8192 131072
+	default 24576
+
+config CONTEST2026_128_XIAOZHI_WEBSOCKET_URL
+	string "XiaoZhi WebSocket URL"
+	default "wss://api.tenclass.net/xiaozhi/v1/"
+
+config CONTEST2026_128_XIAOZHI_OTA_URL
+	string "XiaoZhi activation/version URL"
+	default "https://api.tenclass.net/xiaozhi/ota/"
+	help
+		The upstream version endpoint also returns the pairing code and the
+		authenticated WebSocket URL/token.  It is required even when firmware
+		upgrades are not enabled in the NuttX port.
+
+config CONTEST2026_128_XIAOZHI_LANGUAGE
+	string "Device language sent during activation"
+	default "zh-CN"
+
+config CONTEST2026_128_XIAOZHI_BOARD_TYPE
+	string "XiaoZhi board type"
+	default "esp32-p4-function-ev-board"
+
+config CONTEST2026_128_XIAOZHI_BOARD_NAME
+	string "XiaoZhi board name"
+	default "esp32-p4-function-ev-board"
+
+config CONTEST2026_128_XIAOZHI_BOARD_MANUFACTURER
+	string "XiaoZhi board manufacturer"
+	default "espressif"
+
+config CONTEST2026_128_XIAOZHI_APP_VERSION
+	string "XiaoZhi application version"
+	default "0.1.0"
+
+config CONTEST2026_128_XIAOZHI_TOKEN
+	string "Optional WebSocket bearer token"
+	default ""
+
+config CONTEST2026_128_XIAOZHI_TLS_CA_PATH
+	string "TLS CA certificate path"
+	default ""
+	---help---
+		PEM CA bundle used to verify a wss:// server.  Leave empty only when
+		TLS_ALLOW_INSECURE is enabled for initial board bring-up.
+
+config CONTEST2026_128_XIAOZHI_TLS_ALLOW_INSECURE
+	bool "Allow unverified TLS during bring-up"
+	default n
+	---help---
+		Disable server certificate and hostname verification.  This makes a
+		board without a provisioned CA bundle usable for initial bring-up,
+		but must be disabled for production firmware.
+
+config CONTEST2026_128_XIAOZHI_PROTOCOL_VERSION
+	int "Binary protocol version"
+	range 1 3
+	default 1
+
+config CONTEST2026_128_XIAOZHI_CAPTURE_DEVPATH
+	string "NuttX capture audio device"
+	default "/dev/audio/pcm_in0"
+
+config CONTEST2026_128_XIAOZHI_PLAYBACK_DEVPATH
+	string "NuttX playback audio device"
+	default "/dev/audio/pcm0"
+
+config CONTEST2026_128_XIAOZHI_CLIENT_ID_PATH
+	string "Persistent client identifier file"
+	default "/data/xiaozhi-client-id"
+
+config CONTEST2026_128_XIAOZHI_FB_DEVPATH
+	string "LVGL display device"
+	default "/dev/lcd0" if LV_USE_NUTTX_LCD
+	default "/dev/fb0"
+
+config CONTEST2026_128_XIAOZHI_INPUT_DEVPATH
+	string "LVGL touchscreen device"
+	default "/dev/input0"
+
+endif
