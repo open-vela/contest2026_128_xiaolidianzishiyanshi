@@ -10,6 +10,7 @@ if(CONFIG_LVX_USE_DEMO_CONTEST2026_128_XIAOZHI)
       platform/nuttx/lws_websocket.cpp
       platform/nuttx/nuttx_http.cpp
       platform/nuttx/nuttx_audio.cpp
+      platform/nuttx/nuttx_bsp_test.cpp
       platform/nuttx/nuttx_identity.cpp
       platform/nuttx/nuttx_wifi.cpp
       platform/nuttx/nuttx_lvgl_display.cpp)
@@ -17,7 +18,9 @@ if(CONFIG_LVX_USE_DEMO_CONTEST2026_128_XIAOZHI)
   set(XIAOZHI_UI_SOURCES
       ui/lv_100ask_xz_ai_main.c
       ui/wifi_ui.c
+      ui/bsp_test_ui.c
       ui/xiaozhi_font.c
+      ui/xiaozhi_misans_gb2312_16.c
       ui/font_awesome_20_4.c
       ui/font_awesome_30_4.c)
 

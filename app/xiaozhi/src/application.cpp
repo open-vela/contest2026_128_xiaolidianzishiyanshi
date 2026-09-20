@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "xiaozhi/activation.h"
+#include "xiaozhi/bsp_test.h"
 #include "xiaozhi/identity.h"
 
 namespace xiaozhi {
@@ -23,6 +24,7 @@ Application::Application(ApplicationConfig config)
 }
 
 Application::~Application() {
+  JoinBspTestThreads();
   if (wifi_) {
     wifi_->Stop();
   }
@@ -35,6 +37,66 @@ Application::~Application() {
   if (display_) {
     display_->Stop();
   }
+}
+
+void Application::FinishBspTest(BspTestType type, BspTestResult result) {
+  display_->SetBspTestResult(type, std::move(result));
+  bsp_test_busy_ = false;
+}
+
+void Application::StartBspTest(BspTestType type) {
+  if (bsp_test_busy_.exchange(true)) {
+    BspTestResult result;
+    result.message = "另一个 BSP 测试正在运行";
+    display_->SetBspTestResult(type, std::move(result));
+    return;
+  }
+
+  display_->SetBspTestRunning(type);
+  if (type == BspTestType::kMicrophone) {
+    const bool started = audio_->RunMicrophoneLoopback(
+        [this, type](bool success, const std::string &message) {
+          BspTestResult result;
+          result.success = success;
+          result.message = message;
+          FinishBspTest(type, std::move(result));
+        });
+    if (!started) {
+      BspTestResult result;
+      result.message = "音频未就绪、正在通话或麦克风测试已在运行";
+      FinishBspTest(type, std::move(result));
+    }
+    return;
+  }
+
+  if (type == BspTestType::kSpeaker) {
+    const bool started = audio_->PlayTestSound(
+        [this, type](bool success, const std::string &message) {
+          BspTestResult result;
+          result.success = success;
+          result.message = message;
+          FinishBspTest(type, std::move(result));
+        });
+    if (!started) {
+      BspTestResult result;
+      result.message = "音频设备尚未启动";
+      FinishBspTest(type, std::move(result));
+    }
+    return;
+  }
+
+  bsp_test_threads_.emplace_back([this, type]() {
+    FinishBspTest(type, RunNuttxBspTest(type));
+  });
+}
+
+void Application::JoinBspTestThreads() {
+  for (auto &thread : bsp_test_threads_) {
+    if (thread.joinable()) {
+      thread.join();
+    }
+  }
+  bsp_test_threads_.clear();
 }
 
 void Application::Schedule(Task task) {
@@ -345,6 +407,9 @@ int Application::Run() {
       },
       [this]() { wifi_->Cancel(); });
 
+  display_->SetBspTestCallback(
+      [this](BspTestType type) { StartBspTest(type); });
+
   WifiCallbacks wifi_callbacks;
   wifi_callbacks.scan_changed =
       [this](bool scanning, const std::vector<WifiNetwork> &networks,
@@ -405,13 +470,9 @@ int Application::Run() {
         Schedule([this, message]() { HandleWebSocketDisconnected(message); });
       });
 
-  state_.TransitionTo(DeviceState::kConnecting);
-  display_->ShowNotification("等待 WiFi 连接");
-  if (!wifi_->WaitForIp()) {
-    SetError("WiFi service stopped before network was ready");
-    return 1;
-  }
-
+  /* Start local audio before waiting for an IP address so the offline BSP
+   * microphone and speaker diagnostics remain usable without a network.
+   */
   if (!audio_->Start(
           [this](std::vector<uint8_t> payload, uint32_t timestamp) {
             if (state_.state() != DeviceState::kListening) {
@@ -428,6 +489,13 @@ int Application::Run() {
             Schedule([this, message]() { SetError(message); });
           })) {
     SetError("failed to start NuttX audio devices");
+    return 1;
+  }
+
+  state_.TransitionTo(DeviceState::kConnecting);
+  display_->ShowNotification("等待 WiFi 连接");
+  if (!wifi_->WaitForIp()) {
+    SetError("WiFi service stopped before network was ready");
     return 1;
   }
 
@@ -454,6 +522,7 @@ int Application::Run() {
 
   lock.unlock();
   audio_->SetCaptureEnabled(false);
+  JoinBspTestThreads();
   protocol_->Close();
   audio_->Stop();
   state_.TransitionTo(DeviceState::kStopped);

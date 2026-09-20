@@ -8,9 +8,12 @@ MODULE    = $(CONFIG_LVX_USE_DEMO_CONTEST2026_128_XIAOZHI)
 CXXSRCS = src/main.cpp src/application.cpp src/protocol.cpp
 CXXSRCS += src/device_state_machine.cpp platform/nuttx/lws_websocket.cpp
 CXXSRCS += platform/nuttx/nuttx_audio.cpp platform/nuttx/nuttx_identity.cpp
+CXXSRCS += platform/nuttx/nuttx_bsp_test.cpp
 CXXSRCS += platform/nuttx/nuttx_lvgl_display.cpp
 
-CSRCS = ui/lv_100ask_xz_ai_main.c ui/font_awesome_20_4.c
+CSRCS = ui/lv_100ask_xz_ai_main.c ui/wifi_ui.c ui/bsp_test_ui.c
+CSRCS += ui/xiaozhi_font.c
+CSRCS += ui/xiaozhi_misans_gb2312_16.c ui/font_awesome_20_4.c
 CSRCS += ui/font_awesome_30_4.c
 
 CXXFLAGS += -std=gnu++17

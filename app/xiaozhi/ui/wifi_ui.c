@@ -229,8 +229,8 @@ wifi_ui_t *wifi_ui_create(lv_obj_t *parent) {
   }
 
   ui->panel = lv_obj_create(parent);
-  lv_obj_set_size(ui->panel, LV_PCT(33), LV_PCT(67));
-  lv_obj_align(ui->panel, LV_ALIGN_LEFT_MID, 4, 12);
+  lv_obj_set_size(ui->panel, LV_PCT(32), LV_PCT(88));
+  lv_obj_align(ui->panel, LV_ALIGN_BOTTOM_LEFT, 4, -4);
   lv_obj_set_style_pad_all(ui->panel, 8, 0);
   lv_obj_set_style_radius(ui->panel, 12, 0);
 

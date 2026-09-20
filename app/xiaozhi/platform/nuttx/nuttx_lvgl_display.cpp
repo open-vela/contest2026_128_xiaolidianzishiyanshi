@@ -16,7 +16,9 @@
 
 extern "C" {
 #include "lv_100ask_xz_ai_main.h"
+#include "bsp_test_ui.h"
 #include "wifi_ui.h"
+#include "xiaozhi_font.h"
 #ifdef CONFIG_CONTEST2026_128_XIAOZHI_PPA
 #include "lv_draw_ppa_nuttx.h"
 #endif
@@ -184,6 +186,29 @@ public:
     });
   }
 
+  void SetBspTestCallback(BspTestCallback callback) override {
+    Post([this, callback = std::move(callback)]() mutable {
+      bsp_test_callback_ = std::move(callback);
+      bsp_test_ui_set_callback(bsp_test_ui_, BspTestThunk, this);
+    });
+  }
+
+  void SetBspTestRunning(BspTestType type) override {
+    Post([this, type]() {
+      bsp_test_ui_set_running(bsp_test_ui_, ToUiTestType(type));
+    });
+  }
+
+  void SetBspTestResult(BspTestType type, BspTestResult result) override {
+    Post([this, type, result = std::move(result)]() {
+      bsp_test_ui_set_result(
+          bsp_test_ui_, ToUiTestType(type), result.success ? 1 : 0,
+          result.message.c_str(),
+          result.pixels.empty() ? nullptr : result.pixels.data(),
+          result.width, result.height);
+    });
+  }
+
 private:
   using Task = std::function<void()>;
 
@@ -223,6 +248,45 @@ private:
     auto *display = static_cast<NuttxLvglDisplay *>(argument);
     if (display->wifi_cancel_callback_) {
       display->wifi_cancel_callback_();
+    }
+  }
+
+  static BspTestType FromUiTestType(bsp_test_type_t type) {
+    switch (type) {
+      case BSP_TEST_MICROPHONE:
+        return BspTestType::kMicrophone;
+      case BSP_TEST_SPEAKER:
+        return BspTestType::kSpeaker;
+      case BSP_TEST_CAMERA:
+        return BspTestType::kCamera;
+      case BSP_TEST_DNS:
+        return BspTestType::kDns;
+      case BSP_TEST_PING:
+      default:
+        return BspTestType::kPing;
+    }
+  }
+
+  static bsp_test_type_t ToUiTestType(BspTestType type) {
+    switch (type) {
+      case BspTestType::kMicrophone:
+        return BSP_TEST_MICROPHONE;
+      case BspTestType::kSpeaker:
+        return BSP_TEST_SPEAKER;
+      case BspTestType::kCamera:
+        return BSP_TEST_CAMERA;
+      case BspTestType::kDns:
+        return BSP_TEST_DNS;
+      case BspTestType::kPing:
+      default:
+        return BSP_TEST_PING;
+    }
+  }
+
+  static void BspTestThunk(bsp_test_type_t type, void *argument) {
+    auto *display = static_cast<NuttxLvglDisplay *>(argument);
+    if (display->bsp_test_callback_) {
+      display->bsp_test_callback_(FromUiTestType(type));
     }
   }
 
@@ -276,8 +340,13 @@ private:
 
     lv_100ask_xz_ai_main();
     wifi_ui_ = wifi_ui_create(lv_screen_active());
-    if (wifi_ui_ == nullptr) {
-      std::fprintf(stderr, "xiaozhi UI: WiFi panel initialization failed\n");
+    bsp_test_ui_ = bsp_test_ui_create(lv_screen_active());
+    if (wifi_ui_ == nullptr || bsp_test_ui_ == nullptr) {
+      std::fprintf(stderr, "xiaozhi UI: side panel initialization failed\n");
+      bsp_test_ui_destroy(bsp_test_ui_);
+      bsp_test_ui_ = nullptr;
+      wifi_ui_destroy(wifi_ui_);
+      wifi_ui_ = nullptr;
       lv_100ask_xz_ai_deinit();
       lv_nuttx_deinit(&result);
       lv_deinit();
@@ -315,6 +384,8 @@ private:
                      [this]() { return !running_ || !tasks_.empty(); });
     }
 
+    bsp_test_ui_destroy(bsp_test_ui_);
+    bsp_test_ui_ = nullptr;
     wifi_ui_destroy(wifi_ui_);
     wifi_ui_ = nullptr;
     lv_100ask_xz_ai_deinit();
@@ -349,7 +420,9 @@ private:
   WifiScanCallback wifi_scan_callback_;
   WifiConnectCallback wifi_connect_callback_;
   WifiCancelCallback wifi_cancel_callback_;
+  BspTestCallback bsp_test_callback_;
   wifi_ui_t *wifi_ui_{nullptr};
+  bsp_test_ui_t *bsp_test_ui_{nullptr};
 };
 
 } // namespace

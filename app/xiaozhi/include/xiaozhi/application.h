@@ -1,11 +1,14 @@
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
+#include <vector>
 
 #include "xiaozhi/audio.h"
 #include "xiaozhi/device_state_machine.h"
@@ -54,6 +57,9 @@ private:
   void HandleWebSocketDisconnected(const std::string &message);
   void SetError(const std::string &message);
   bool Provision(const std::string &device_id, const std::string &client_id);
+  void StartBspTest(BspTestType type);
+  void FinishBspTest(BspTestType type, BspTestResult result);
+  void JoinBspTestThreads();
 
   ApplicationConfig config_;
   DeviceStateMachine state_;
@@ -71,6 +77,8 @@ private:
   bool websocket_connecting_{false};
   bool listen_after_connect_{false};
   bool stop_requested_{false};
+  std::atomic<bool> bsp_test_busy_{false};
+  std::vector<std::thread> bsp_test_threads_;
 };
 
 } // namespace xiaozhi

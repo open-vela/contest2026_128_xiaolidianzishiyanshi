@@ -18,7 +18,6 @@ config LVX_USE_DEMO_CONTEST2026_128_XIAOZHI
 	select WIRELESS_WAPI
 	select NETUTILS_DHCPC
 	select NETUTILS_NETLIB
-	select LV_FONT_SIMSUN_16_CJK
 	---help---
 		Enable the XiaoZhi voice assistant client port.  The application uses
 		only NuttX/POSIX interfaces plus openvela's packaged cJSON, Opus and

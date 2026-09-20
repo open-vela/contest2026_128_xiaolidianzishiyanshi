@@ -24,6 +24,8 @@
 #include <utility>
 #include <vector>
 
+#include "bsp_test_sound.h"
+
 namespace xiaozhi {
 namespace {
 
@@ -58,6 +60,8 @@ constexpr size_t kCaptureSlotCount =
     CONFIG_CONTEST2026_128_XIAOZHI_CAPTURE_SLOT_COUNT;
 constexpr int kFallbackBufferCount = 4;
 constexpr int kFallbackBufferSize = kCaptureSamples * sizeof(int16_t);
+constexpr size_t kLoopbackSamples = kCaptureSampleRate * 2;
+constexpr size_t kTestSoundSamples = kCaptureSampleRate * 3 / 4;
 
 int CreateAudioThread(pthread_t *thread, void *(*entry)(void *),
                       void *argument) {
@@ -152,6 +156,12 @@ struct AudioEndpoint {
 #ifdef CONFIG_AUDIO_MULTI_SESSION
   void *session{nullptr};
 #endif
+};
+
+struct RawPlayback {
+  std::vector<int16_t> samples;
+  AudioDevice::TestCallback callback;
+  std::string success_message;
 };
 
 unsigned long SessionArgument(AudioEndpoint &endpoint) {
@@ -420,6 +430,45 @@ public:
     playback_primed_ = false;
   }
 
+  bool RunMicrophoneLoopback(TestCallback callback) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!running_ || capture_enabled_ || loopback_recording_) {
+      return false;
+    }
+    loopback_samples_.clear();
+    loopback_samples_.reserve(kLoopbackSamples);
+    loopback_callback_ = std::move(callback);
+    loopback_recording_ = true;
+    return true;
+  }
+
+  bool PlayTestSound(TestCallback callback) override {
+    RawPlayback playback;
+    playback.samples.reserve(kTestSoundSamples);
+    for (size_t index = 0; index < kTestSoundSamples; ++index) {
+      /* Alternate two amplitudes to make the test sound easy to distinguish
+       * from speech while keeping the entire source waveform in a header.
+       */
+      int16_t sample = kBspTestTone[index % kBspTestToneSamples];
+      if ((index / (kCaptureSampleRate / 4)) & 1) {
+        sample /= 2;
+      }
+      playback.samples.push_back(sample);
+    }
+    playback.callback = std::move(callback);
+    playback.success_message = "测试音效已提交到喇叭";
+
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (!running_) {
+        return false;
+      }
+      raw_playback_queue_.push_back(std::move(playback));
+    }
+    playback_wake_.notify_one();
+    return true;
+  }
+
 private:
   static void *CaptureEntry(void *argument) {
     static_cast<NuttxAudioDevice *>(argument)->CaptureLoop();
@@ -512,13 +561,15 @@ private:
 
       auto *buffer = static_cast<ap_buffer_s *>(message.u.ptr);
       bool enabled;
+      bool loopback;
       EncodedCallback callback;
       {
         std::lock_guard<std::mutex> lock(mutex_);
         enabled = capture_enabled_;
+        loopback = loopback_recording_;
         callback = encoded_callback_;
       }
-      if (enabled) {
+      if (enabled || loopback) {
         const auto *samples = reinterpret_cast<const int16_t *>(buffer->samp);
         const size_t raw_sample_count = buffer->nbytes / sizeof(int16_t);
         size_t selected_slot;
@@ -527,6 +578,33 @@ private:
         const size_t sample_count =
             ExtractCaptureMono(samples, raw_sample_count, &mono, &selected_slot,
                                &slot0_energy, &slot1_energy);
+
+        if (loopback) {
+          bool playback_ready = false;
+          {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (loopback_recording_) {
+              const size_t remaining =
+                  kLoopbackSamples - loopback_samples_.size();
+              const size_t copy_count =
+                  sample_count < remaining ? sample_count : remaining;
+              loopback_samples_.insert(loopback_samples_.end(), mono.begin(),
+                                       mono.begin() + copy_count);
+              if (loopback_samples_.size() == kLoopbackSamples) {
+                RawPlayback playback;
+                playback.samples = std::move(loopback_samples_);
+                playback.callback = std::move(loopback_callback_);
+                playback.success_message = "已录制 2 秒并提交喇叭回放";
+                raw_playback_queue_.push_back(std::move(playback));
+                loopback_recording_ = false;
+                playback_ready = true;
+              }
+            }
+          }
+          if (playback_ready) {
+            playback_wake_.notify_one();
+          }
+        }
 #ifdef CONFIG_CONTEST2026_128_XIAOZHI_AUDIO_DIAGNOSTICS
         for (size_t index = 0; index < sample_count; ++index) {
           const int32_t magnitude = SampleMagnitude(mono[index]);
@@ -543,8 +621,10 @@ private:
           ++meter_slot1_buffers;
         }
 #endif
-        pending.insert(pending.end(), mono.begin(), mono.end());
-        while (pending.size() >= kCaptureSamples) {
+        if (enabled) {
+          pending.insert(pending.end(), mono.begin(), mono.end());
+        }
+        while (enabled && pending.size() >= kCaptureSamples) {
           const int bytes =
               opus_encode(encoder, pending.data(), kCaptureSamples,
                           encoded.data(), encoded.size());
@@ -559,7 +639,7 @@ private:
           }
           pending.erase(pending.begin(), pending.begin() + kCaptureSamples);
         }
-      } else {
+      } else if (!loopback) {
         pending.clear();
       }
 #ifdef CONFIG_CONTEST2026_128_XIAOZHI_AUDIO_DIAGNOSTICS
@@ -614,13 +694,24 @@ private:
 
     while (Running()) {
       std::vector<uint8_t> packet;
+      RawPlayback raw_playback;
+      bool has_raw_playback = false;
       int wanted_rate;
       {
         std::unique_lock<std::mutex> lock(mutex_);
         playback_wake_.wait(
-            lock, [this]() { return !running_ || !playback_queue_.empty(); });
+            lock, [this]() {
+              return !running_ || !raw_playback_queue_.empty() ||
+                     !playback_queue_.empty();
+            });
         if (!running_) {
           break;
+        }
+
+        if (!raw_playback_queue_.empty()) {
+          raw_playback = std::move(raw_playback_queue_.front());
+          raw_playback_queue_.pop_front();
+          has_raw_playback = true;
         }
 
         /* Prime approximately 120 ms before the first DMA submission.  Two
@@ -629,7 +720,8 @@ private:
          * response: when only one packet arrives, begin after 80 ms.
          */
 
-        if (!playback_primed_ && playback_queue_.size() < 2) {
+        if (!has_raw_playback && !playback_primed_ &&
+            playback_queue_.size() < 2) {
           playback_wake_.wait_for(
               lock, std::chrono::milliseconds(80),
               [this]() { return !running_ || playback_queue_.size() >= 2; });
@@ -637,13 +729,13 @@ private:
             break;
           }
         }
-        if (!playback_primed_) {
+        if (!has_raw_playback && !playback_primed_) {
           xiaozhi_ainfo("playback primed packets=%zu\n",
                         playback_queue_.size());
           playback_primed_ = true;
         }
-        wanted_rate = output_sample_rate_;
-        if (!playback_queue_.empty()) {
+        wanted_rate = has_raw_playback ? kCaptureSampleRate : output_sample_rate_;
+        if (!has_raw_playback && !playback_queue_.empty()) {
           packet = std::move(playback_queue_.front());
           playback_queue_.pop_front();
         }
@@ -662,12 +754,18 @@ private:
         int opus_error = OPUS_OK;
         decoder = opus_decoder_create(wanted_rate, kChannels, &opus_error);
         if (decoder == nullptr || opus_error != OPUS_OK) {
+          if (has_raw_playback && raw_playback.callback) {
+            raw_playback.callback(false, "无法初始化喇叭解码器");
+          }
           ReportError("opus_decoder_create failed");
           break;
         }
         if (ConfigureEndpoint(playback, playback_path_, AUDIO_TYPE_OUTPUT,
                               wanted_rate, "play") < 0) {
           CloseEndpoint(playback);
+          if (has_raw_playback && raw_playback.callback) {
+            raw_playback.callback(false, "无法配置喇叭设备");
+          }
           ReportError("cannot configure playback device " + playback_path_);
           break;
         }
@@ -675,6 +773,9 @@ private:
           free_buffers.push_back(buffer);
         }
         if (ioctl(playback.fd, AUDIOIOC_START, SessionArgument(playback)) < 0) {
+          if (has_raw_playback && raw_playback.callback) {
+            raw_playback.callback(false, "无法启动喇叭设备");
+          }
           ReportError("cannot start playback device");
           break;
         }
@@ -691,24 +792,33 @@ private:
         }
       }
 
-      if (packet.empty()) {
+      if (!has_raw_playback && packet.empty()) {
         continue;
       }
-      const int samples = opus_decode(decoder, packet.data(), packet.size(),
-                                      decoded.data(), decoded.size(), 0);
-      if (samples < 0) {
-        ReportError("invalid Opus playback packet");
-        continue;
+      int samples;
+      if (has_raw_playback) {
+        samples = static_cast<int>(raw_playback.samples.size());
+        ExpandPlaybackSlots(raw_playback.samples.data(),
+                            raw_playback.samples.size(), &playback_slots);
+      } else {
+        samples = opus_decode(decoder, packet.data(), packet.size(),
+                              decoded.data(), decoded.size(), 0);
+        if (samples < 0) {
+          ReportError("invalid Opus playback packet");
+          continue;
+        }
+        ExpandPlaybackSlots(decoded.data(), static_cast<size_t>(samples),
+                            &playback_slots);
       }
-
-      ExpandPlaybackSlots(decoded.data(), static_cast<size_t>(samples),
-                          &playback_slots);
 #ifdef CONFIG_CONTEST2026_128_XIAOZHI_AUDIO_DIAGNOSTICS
       ++playback_meter_packets;
       playback_meter_samples += samples;
       playback_meter_bytes += playback_slots.size() * sizeof(int16_t);
+      const int16_t *meter_source = has_raw_playback
+                                        ? raw_playback.samples.data()
+                                        : decoded.data();
       for (int index = 0; index < samples; ++index) {
-        const int32_t magnitude = SampleMagnitude(decoded[index]);
+        const int32_t magnitude = SampleMagnitude(meter_source[index]);
         if (magnitude > playback_meter_peak) {
           playback_meter_peak = magnitude;
         }
@@ -731,6 +841,7 @@ private:
       const uint8_t *source =
           reinterpret_cast<const uint8_t *>(playback_slots.data());
       size_t remaining = playback_slots.size() * sizeof(int16_t);
+      bool playback_ok = true;
       while (remaining > 0 && Running()) {
         if (free_buffers.empty()) {
           usleep(5000);
@@ -752,11 +863,18 @@ private:
         buffer->curbyte = 0;
         if (Enqueue(playback, buffer, false) < 0) {
           ReportError("cannot enqueue playback buffer");
+          playback_ok = false;
           remaining = 0;
           break;
         }
         source += bytes;
         remaining -= bytes;
+      }
+      if (has_raw_playback && raw_playback.callback) {
+        const bool success = playback_ok && remaining == 0;
+        raw_playback.callback(success,
+                              success ? raw_playback.success_message
+                                      : "喇叭写入失败或测试被中止");
       }
     }
 
@@ -794,6 +912,10 @@ private:
   pthread_t capture_thread_{};
   pthread_t playback_thread_{};
   std::deque<std::vector<uint8_t>> playback_queue_;
+  std::deque<RawPlayback> raw_playback_queue_;
+  std::vector<int16_t> loopback_samples_;
+  TestCallback loopback_callback_;
+  bool loopback_recording_{false};
   EncodedCallback encoded_callback_;
   ErrorCallback error_callback_;
 };

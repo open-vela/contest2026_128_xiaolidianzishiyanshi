@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -9,6 +10,22 @@
 
 namespace xiaozhi {
 
+enum class BspTestType {
+  kMicrophone,
+  kSpeaker,
+  kCamera,
+  kPing,
+  kDns,
+};
+
+struct BspTestResult {
+  bool success{false};
+  std::string message;
+  std::vector<uint16_t> pixels;
+  int width{0};
+  int height{0};
+};
+
 class Display {
 public:
   using TalkButtonCallback = std::function<void()>;
@@ -16,6 +33,7 @@ public:
   using WifiConnectCallback =
       std::function<void(const WifiNetwork &, const std::string &)>;
   using WifiCancelCallback = std::function<void()>;
+  using BspTestCallback = std::function<void(BspTestType)>;
 
   virtual ~Display() = default;
   virtual bool Start() = 0;
@@ -38,6 +56,10 @@ public:
   virtual void UpdateWifiConnection(WifiConnectionStage stage,
                                     const std::string &ssid,
                                     const std::string &message) = 0;
+  virtual void SetBspTestCallback(BspTestCallback callback) = 0;
+  virtual void SetBspTestRunning(BspTestType type) = 0;
+  virtual void SetBspTestResult(BspTestType type,
+                                BspTestResult result) = 0;
 };
 
 std::unique_ptr<Display>

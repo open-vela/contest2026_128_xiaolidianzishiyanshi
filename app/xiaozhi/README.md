@@ -82,9 +82,10 @@ client-ID path and protocol version are Kconfig parameters.  The dedicated
 framebuffer (`/dev/fb0`), the GT911 touchscreen (`/dev/input0`), LVGL 9.1,
 networking, libc++, Opus, ES8311 and NuttX Audio pieces needed by this
 application without changing another build configuration.  Text widgets use
-LVGL's default Montserrat 16 font with the built-in SimSun 16 CJK bitmap font
-as the Chinese fallback; Font Awesome is used only for status and
-WiFi/lock/search pictograms.  PPA acceleration is not enabled.
+an embedded 16 px, 2-bpp MiSans bitmap containing ASCII and every GB2312
+character.  Characters outside that set fall back to LVGL's default
+Montserrat 16 font; Font Awesome is used only for status and WiFi/lock/search
+pictograms.  PPA acceleration is not enabled.
 
 For bring-up, the configured server and token can be overridden without a
 configuration change:

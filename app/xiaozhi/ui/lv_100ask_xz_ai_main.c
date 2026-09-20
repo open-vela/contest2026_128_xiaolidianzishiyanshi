@@ -171,11 +171,13 @@ void lv_100ask_xz_ai_main(void) {
   lv_label_set_text(g_pt_lv_100ask_xz_ai->state_bar_img_battery,
                     "\xef\x89\x80");
 
-  /* Main assistant content occupies the right two thirds of the screen. */
+  /* Keep the assistant in the middle third.  WiFi and offline BSP tests own
+   * the left and right thirds respectively.
+   */
   lv_obj_t *main_content = lv_obj_create(lv_screen_active());
   lv_obj_remove_style_all(main_content);
-  lv_obj_set_size(main_content, LV_PCT(67), LV_PCT(90));
-  lv_obj_align(main_content, LV_ALIGN_BOTTOM_RIGHT, -4, -4);
+  lv_obj_set_size(main_content, LV_PCT(32), LV_PCT(88));
+  lv_obj_align(main_content, LV_ALIGN_BOTTOM_MID, 0, -4);
 
   /* emoji */
   // https://www.iconfont.cn/search/index?searchType=icon&q=%E5%9C%86%E8%84%B8%E8%A1%A8%E6%83%85
@@ -198,7 +200,7 @@ void lv_100ask_xz_ai_main(void) {
    * click again to send listen/stop.
    */
   g_pt_lv_100ask_xz_ai->button_talk = lv_button_create(main_content);
-  lv_obj_set_size(g_pt_lv_100ask_xz_ai->button_talk, 180, 52);
+  lv_obj_set_size(g_pt_lv_100ask_xz_ai->button_talk, 160, 48);
   lv_obj_align(g_pt_lv_100ask_xz_ai->button_talk, LV_ALIGN_BOTTOM_MID, 0, -16);
   lv_obj_add_event_cb(g_pt_lv_100ask_xz_ai->button_talk, talk_button_event_cb,
                       LV_EVENT_CLICKED, NULL);
