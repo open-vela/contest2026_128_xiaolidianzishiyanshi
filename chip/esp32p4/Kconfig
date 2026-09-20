@@ -79,6 +79,18 @@ config ESPRESSIF_MIPI_DSI
 		framebuffer lower half.  The first supported panel is the EK79007
 		on the ESP32-P4 Function EV Board.
 
+config ESPRESSIF_MIPI_CSI
+	bool "ESP32-P4 MIPI-CSI capture transport"
+	depends on ARCH_CHIP_ESP32P4 && DRIVERS_VIDEO && VIDEO_STREAM
+	depends on SCHED_LPWORK && ESPRESSIF_SPIRAM
+	help
+		Enable the ESP32-P4 MIPI-CSI host, bridge and DW-GDMA image-data
+		lower half.  The initial implementation transports one packed RAW10
+		frame per capture request and does not provide an ISP or demosaic.
+
+		CSI and DSI are mutually exclusive because their current lower halves
+		both own the single DW-GDMA interrupt handler.
+
 choice ESP32P4_REV_MIN
 	prompt "Minimum Supported ESP32-P4 Revision"
 	default ESP32P4_REV_MIN_301

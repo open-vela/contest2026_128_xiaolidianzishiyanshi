@@ -145,6 +145,18 @@ int board_mipi_dsi_initialize(void);
 #endif
 
 /****************************************************************************
+ * Name: board_sc2336_initialize
+ *
+ * Description:
+ *   Probe the SC2336 and register the experimental RAW10 camera as
+ *   /dev/video0.  The camera module must provide the 24 MHz input clock.
+ ****************************************************************************/
+
+#ifdef CONFIG_ESP32P4_FUNCTION_EV_BOARD_SC2336
+int board_sc2336_initialize(void);
+#endif
+
+/****************************************************************************
  * Name: board_touchscreen_initialize
  *
  * Description:
@@ -153,6 +165,19 @@ int board_mipi_dsi_initialize(void);
 
 #ifdef CONFIG_ESP32P4_FUNCTION_EV_BOARD_TOUCHSCREEN
 int board_touchscreen_initialize(void);
+#endif
+
+/****************************************************************************
+ * Name: board_es8311_initialize
+ *
+ * Description:
+ *   Initialize the ES8311 control and audio interfaces and register the
+ *   playback and capture devices as /dev/audio/pcm0 and
+ *   /dev/audio/pcm_in0.
+ ****************************************************************************/
+
+#ifdef CONFIG_AUDIO_ES8311
+int board_es8311_initialize(void);
 #endif
 
 #endif /* __ASSEMBLY__ */

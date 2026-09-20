@@ -32,6 +32,10 @@ if(CONFIG_ESPRESSIF_MIPI_DSI)
   list(APPEND SRCS ${CMAKE_CURRENT_SOURCE_DIR}/esp_mipi_dsi.c)
 endif()
 
+if(CONFIG_ESPRESSIF_MIPI_CSI)
+  list(APPEND SRCS ${CMAKE_CURRENT_SOURCE_DIR}/esp_mipi_csi.c)
+endif()
+
 if (CONFIG_ESP32P4_SDMMC)
   list(APPEND SRCS ${CMAKE_CURRENT_SOURCE_DIR}/esp32p4_sdmmc.c)
 endif()

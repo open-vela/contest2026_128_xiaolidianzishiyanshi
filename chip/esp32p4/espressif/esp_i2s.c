@@ -29,14 +29,40 @@
 #include <assert.h>
 #include <debug.h>
 #include <errno.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <math.h>
+#ifdef CONFIG_CONTEST2026_128_XIAOZHI_AUDIO_DIAGNOSTICS
+#include <syslog.h>
+#define xiaozhi_alog(level, format, ...)                                       \
+  syslog(level, "xiaozhi audio: " format, ##__VA_ARGS__)
+#define xiaozhi_ainfo(format, ...) xiaozhi_alog(LOG_INFO, format, ##__VA_ARGS__)
+#define xiaozhi_awarn(format, ...)                                             \
+  xiaozhi_alog(LOG_WARNING, format, ##__VA_ARGS__)
+#define xiaozhi_aerr(format, ...) xiaozhi_alog(LOG_ERR, format, ##__VA_ARGS__)
+#else
+#define xiaozhi_alog(level, format, ...)                                       \
+  do {                                                                         \
+  } while (0)
+#define xiaozhi_ainfo(format, ...)                                             \
+  do {                                                                         \
+  } while (0)
+#define xiaozhi_awarn(format, ...)                                             \
+  do {                                                                         \
+  } while (0)
+#define xiaozhi_aerr(format, ...)                                              \
+  do {                                                                         \
+  } while (0)
+#endif
 
-#include <nuttx/nuttx.h>
-#include <nuttx/irq.h>
 #include <nuttx/arch.h>
+#include <nuttx/irq.h>
+#include <nuttx/kmalloc.h>
+#include <nuttx/mutex.h>
+#include <nuttx/nuttx.h>
+#include <nuttx/semaphore.h>
 #include <nuttx/spinlock.h>
+#include <nuttx/wqueue.h>
 
 #include "riscv_internal.h"
 
@@ -48,40 +74,40 @@
 #include "hal/i2s_hal.h"
 #include "hal/i2s_ll.h"
 #include "hal/i2s_periph.h"
-#include "soc/i2s_reg.h"
 #include "hal/i2s_types.h"
-#include "soc/gpio_sig_map.h"
 #include "periph_ctrl.h"
+#include "soc/gpio_sig_map.h"
+#include "soc/i2s_reg.h"
 
 #include "esp_attr.h"
+#include "esp_bit_defs.h"
 #include "esp_cache.h"
 #include "esp_check.h"
 #include "esp_clk_tree.h"
-#include "esp_bit_defs.h"
 #include "esp_cpu.h"
 #include "esp_rom_sys.h"
+#include "hal/dma_types.h"
 #include "riscv/interrupt.h"
 #include "soc/lldesc.h"
-#include "hal/dma_types.h"
 #if SOC_I2S_SUPPORTS_APLL
-#  include "hal/clk_tree_ll.h"
-#  include "clk_ctrl_os.h"
+#include "clk_ctrl_os.h"
+#include "hal/clk_tree_ll.h"
 #endif
-#include "hal/gdma_periph.h"
 #include "hal/gdma_ll.h"
+#include "hal/gdma_periph.h"
 
 #if SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE
-#  include "hal/cache_hal.h"
-#  include "hal/cache_ll.h"
+#include "hal/cache_hal.h"
+#include "hal/cache_ll.h"
 #endif
 
 #if SOC_GDMA_SUPPORTED
-#  include "esp_private/gdma.h"
+#include "esp_private/gdma.h"
 #endif
 
 #ifdef CONFIG_PM
-#  include "soc/soc_caps.h"
-#  include "include/esp_pm.h"
+#include "include/esp_pm.h"
+#include "soc/soc_caps.h"
 #endif
 
 /****************************************************************************
@@ -89,95 +115,76 @@
  ****************************************************************************/
 
 #ifdef CONFIG_ESPRESSIF_I2S0_DATA_BIT_WIDTH_8BIT
-#  define ESPRESSIF_I2S0_DATA_BIT_WIDTH 8
+#define ESPRESSIF_I2S0_DATA_BIT_WIDTH 8
 #elif CONFIG_ESPRESSIF_I2S0_DATA_BIT_WIDTH_16BIT
-#  define ESPRESSIF_I2S0_DATA_BIT_WIDTH 16
+#define ESPRESSIF_I2S0_DATA_BIT_WIDTH 16
 #elif CONFIG_ESPRESSIF_I2S0_DATA_BIT_WIDTH_24BIT
-#  define ESPRESSIF_I2S0_DATA_BIT_WIDTH 24
+#define ESPRESSIF_I2S0_DATA_BIT_WIDTH 24
 #elif CONFIG_ESPRESSIF_I2S0_DATA_BIT_WIDTH_32BIT
-#  define ESPRESSIF_I2S0_DATA_BIT_WIDTH 32
+#define ESPRESSIF_I2S0_DATA_BIT_WIDTH 32
 #endif
 
 /* I2S DMA RX/TX description number */
 
-#define I2S_DMADESC_NUM                 (CONFIG_I2S_DMADESC_NUM)
+#define I2S_DMADESC_NUM (CONFIG_I2S_DMADESC_NUM)
 
 /* I2S DMA channel number */
 
 #define I2S_DMA_CHANNEL_MAX (2)
 
 #ifdef CONFIG_ESPRESSIF_I2S0_TX
-#  define I2S0_TX_ENABLED 1
+#define I2S0_TX_ENABLED 1
 #else
-#  define I2S0_TX_ENABLED 0
+#define I2S0_TX_ENABLED 0
 #endif
 
 #ifdef CONFIG_ESPRESSIF_I2S0_RX
-#  define I2S0_RX_ENABLED 1
+#define I2S0_RX_ENABLED 1
 #else
-#  define I2S0_RX_ENABLED 0
+#define I2S0_RX_ENABLED 0
 #endif
 
 /* Debug ********************************************************************/
 
 #ifdef CONFIG_DEBUG_I2S_INFO
-#  define CONFIG_ESPRESSIF_I2S_DUMPBUFFERS
+#define CONFIG_ESPRESSIF_I2S_DUMPBUFFERS
 #else
-#  undef CONFIG_ESPRESSIF_I2S_DUMPBUFFERS
+#undef CONFIG_ESPRESSIF_I2S_DUMPBUFFERS
 #endif
 
-#define I2S_GPIO_UNUSED -1      /* For signals which are not used */
+#define I2S_GPIO_UNUSED -1 /* For signals which are not used */
 
-#define I2S_TDM_AUTO_SLOT_NUM    (0)
-#define I2S_TDM_AUTO_WS_WIDTH    (0)
-#define I2S_TDM_AUTO_SLOT        (I2S_TDM_SLOT0 | I2S_TDM_SLOT1)
+#define I2S_TDM_AUTO_SLOT_NUM (0)
+#define I2S_TDM_AUTO_WS_WIDTH (0)
+#define I2S_TDM_AUTO_SLOT (I2S_TDM_SLOT0 | I2S_TDM_SLOT1)
 
-#define I2S_TDM_PHILIPS_SLOT_DEFAULT_CONFIG(cfg, bits_per_sample, mask) \
-    cfg.slot_mask = (mask),                                             \
-    cfg.ws_width = I2S_TDM_AUTO_WS_WIDTH,                               \
-    cfg.ws_pol = false,                                                 \
-    cfg.bit_shift = true,                                               \
-    cfg.left_align = false,                                             \
-    cfg.big_endian = false,                                             \
-    cfg.bit_order_lsb = false,                                          \
-    cfg.skip_mask = false                                               \
+#define I2S_TDM_PHILIPS_SLOT_DEFAULT_CONFIG(cfg, bits_per_sample, mask)        \
+  cfg.slot_mask = (mask), cfg.ws_width = I2S_TDM_AUTO_WS_WIDTH,                \
+  cfg.ws_pol = false, cfg.bit_shift = true, cfg.left_align = false,            \
+  cfg.big_endian = false, cfg.bit_order_lsb = false, cfg.skip_mask = false
 
-#define I2S_TDM_MSB_SLOT_DEFAULT_CONFIG(cfg, bits_per_sample, mask) \
-    cfg.slot_mask = (mask),                                         \
-    cfg.ws_width = I2S_TDM_AUTO_WS_WIDTH,                           \
-    cfg.ws_pol = false,                                             \
-    cfg.bit_shift = false,                                          \
-    cfg.left_align = false,                                         \
-    cfg.big_endian = false,                                         \
-    cfg.bit_order_lsb = false,                                      \
-    cfg.skip_mask = false                                           \
+#define I2S_TDM_MSB_SLOT_DEFAULT_CONFIG(cfg, bits_per_sample, mask)            \
+  cfg.slot_mask = (mask), cfg.ws_width = I2S_TDM_AUTO_WS_WIDTH,                \
+  cfg.ws_pol = false, cfg.bit_shift = false, cfg.left_align = false,           \
+  cfg.big_endian = false, cfg.bit_order_lsb = false, cfg.skip_mask = false
 
-#define I2S_TDM_PCM_SHORT_SLOT_DEFAULT_CONFIG(cfg, bits_per_sample, mask) \
-    cfg.slot_mask = (mask),                                               \
-    cfg.ws_width = 1,                                                     \
-    cfg.ws_pol = true,                                                    \
-    cfg.bit_shift = true,                                                 \
-    cfg.left_align = false,                                               \
-    cfg.big_endian = false,                                               \
-    cfg.bit_order_lsb = false,                                            \
-    cfg.skip_mask = false                                                 \
+#define I2S_TDM_PCM_SHORT_SLOT_DEFAULT_CONFIG(cfg, bits_per_sample, mask)      \
+  cfg.slot_mask = (mask), cfg.ws_width = 1, cfg.ws_pol = true,                 \
+  cfg.bit_shift = true, cfg.left_align = false, cfg.big_endian = false,        \
+  cfg.bit_order_lsb = false, cfg.skip_mask = false
 
-#define I2S_PDM_TX_SLOT_DEFAULT_CONFIG(cfg)                   \
-    cfg.sd_prescale = 0,                                      \
-    cfg.sd_scale = I2S_PDM_SIG_SCALING_MUL_1,                 \
-    cfg.hp_scale = I2S_PDM_SIG_SCALING_DIV_2,                 \
-    cfg.lp_scale = I2S_PDM_SIG_SCALING_MUL_1,                 \
-    cfg.sinc_scale = I2S_PDM_SIG_SCALING_MUL_1,               \
-    cfg.line_mode = I2S_PDM_TX_ONE_LINE_CODEC,                \
-    cfg.hp_en = true,                                         \
-    cfg.hp_cut_off_freq_hzx10 = 35.5,                         \
-    cfg.sd_dither = 0,                                        \
-    cfg.sd_dither2 = 1                                        \
+#define I2S_PDM_TX_SLOT_DEFAULT_CONFIG(cfg)                                    \
+  cfg.sd_prescale = 0, cfg.sd_scale = I2S_PDM_SIG_SCALING_MUL_1,               \
+  cfg.hp_scale = I2S_PDM_SIG_SCALING_DIV_2,                                    \
+  cfg.lp_scale = I2S_PDM_SIG_SCALING_MUL_1,                                    \
+  cfg.sinc_scale = I2S_PDM_SIG_SCALING_MUL_1,                                  \
+  cfg.line_mode = I2S_PDM_TX_ONE_LINE_CODEC, cfg.hp_en = true,                 \
+  cfg.hp_cut_off_freq_hzx10 = 35.5, cfg.sd_dither = 0, cfg.sd_dither2 = 1
 
 #if SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE
-#  define I2S_DMA_BUFFER_MAX_SIZE   DMA_DESCRIPTOR_BUFFER_MAX_SIZE_64B_ALIGNED
+#define I2S_DMA_BUFFER_MAX_SIZE DMA_DESCRIPTOR_BUFFER_MAX_SIZE_64B_ALIGNED
 #else
-#  define I2S_DMA_BUFFER_MAX_SIZE   DMA_DESCRIPTOR_BUFFER_MAX_SIZE_4B_ALIGNED
+#define I2S_DMA_BUFFER_MAX_SIZE DMA_DESCRIPTOR_BUFFER_MAX_SIZE_4B_ALIGNED
 #endif
 
 /****************************************************************************
@@ -186,18 +193,16 @@
 
 /* Multiplier of MCLK to sample rate */
 
-typedef enum
-{
-  I2S_MCLK_MULTIPLE_128 = 128,  /* mclk = sample_rate * 128 */
-  I2S_MCLK_MULTIPLE_256 = 256,  /* mclk = sample_rate * 256 */
-  I2S_MCLK_MULTIPLE_384 = 384,  /* mclk = sample_rate * 384 */
-  I2S_MCLK_MULTIPLE_512 = 512,  /* mclk = sample_rate * 512 */
+typedef enum {
+  I2S_MCLK_MULTIPLE_128 = 128, /* mclk = sample_rate * 128 */
+  I2S_MCLK_MULTIPLE_256 = 256, /* mclk = sample_rate * 256 */
+  I2S_MCLK_MULTIPLE_384 = 384, /* mclk = sample_rate * 384 */
+  I2S_MCLK_MULTIPLE_512 = 512, /* mclk = sample_rate * 512 */
 } i2s_mclk_multiple_t;
 
 /* I2S Audio Standard Mode */
 
-typedef enum
-{
+typedef enum {
   I2S_TDM_PHILIPS = 0,
   I2S_TDM_MSB,
   I2S_TDM_PCM,
@@ -206,20 +211,19 @@ typedef enum
 
 /* I2S Device hardware configuration */
 
-struct esp_i2s_config_s
-{
-  uint32_t port;                    /* I2S port */
-  uint32_t role;                    /* I2S port role (master or slave) */
-  uint8_t data_width;               /* I2S sample data width */
-  uint32_t rate;                    /* I2S sample-rate */
-  uint32_t total_slot;              /* Total slot number */
+struct esp_i2s_config_s {
+  uint32_t port;       /* I2S port */
+  uint32_t role;       /* I2S port role (master or slave) */
+  uint8_t data_width;  /* I2S sample data width */
+  uint32_t rate;       /* I2S sample-rate */
+  uint32_t total_slot; /* Total slot number */
 
-  bool tx_en;                       /* Is TX enabled? */
-  bool rx_en;                       /* Is RX enabled? */
-  int8_t mclk_pin;                  /* MCLK pin, output */
+  bool tx_en;      /* Is TX enabled? */
+  bool rx_en;      /* Is RX enabled? */
+  int8_t mclk_pin; /* MCLK pin, output */
 
-  int tx_clk_src;                   /* Select the I2S TX source clock */
-  int rx_clk_src;                   /* Select the I2S TX source clock */
+  int tx_clk_src; /* Select the I2S TX source clock */
+  int rx_clk_src; /* Select the I2S TX source clock */
 
   /* BCLK pin, input in slave role, output in master role */
 
@@ -229,37 +233,36 @@ struct esp_i2s_config_s
 
   int8_t ws_pin;
 
-  int8_t dout_pin;                  /* DATA pin, output */
-  int8_t din_pin;                   /* DATA pin, input */
+  int8_t dout_pin; /* DATA pin, output */
+  int8_t din_pin;  /* DATA pin, input */
 
-  uint8_t  audio_std_mode;          /* Select audio standard (i2s_audio_mode_t) */
+  uint8_t audio_std_mode; /* Select audio standard (i2s_audio_mode_t) */
 
   /* WS signal polarity, set true to enable high level first */
 
   bool ws_pol;
 
-  i2s_hal_context_t *ctx;           /* Common layer struct */
-  i2s_hal_clock_info_t *clk_info;   /* Common layer clock info struct */
+  i2s_hal_context_t *ctx;         /* Common layer struct */
+  i2s_hal_clock_info_t *clk_info; /* Common layer clock info struct */
 #ifdef CONFIG_PM
-  esp_pm_lock_handle_t pm_lock;     /* Power management lock */
+  esp_pm_lock_handle_t pm_lock; /* Power management lock */
 #endif
 };
 
-struct esp_buffer_s
-{
+struct esp_buffer_s {
   struct esp_buffer_s *flink; /* Supports a singly linked list */
 
   /* The associated DMA in/outlink */
 
   lldesc_t *dma_link[I2S_DMADESC_NUM];
 
-  i2s_callback_t callback;      /* DMA completion callback */
-  uint32_t timeout;             /* Timeout value of the DMA transfers */
-  void *arg;                    /* Callback's argument */
-  struct ap_buffer_s *apb;      /* The audio buffer */
-  uint8_t *buf;                 /* The DMA's descriptor buffer */
-  uint32_t nbytes;              /* The DMA's descriptor buffer size */
-  int result;                   /* The result of the transfer */
+  i2s_callback_t callback; /* DMA completion callback */
+  uint32_t timeout;        /* Timeout value of the DMA transfers */
+  void *arg;               /* Callback's argument */
+  struct ap_buffer_s *apb; /* The audio buffer */
+  uint8_t *buf;            /* The DMA's descriptor buffer */
+  uint32_t nbytes;         /* The DMA's descriptor buffer size */
+  int result;              /* The result of the transfer */
 };
 
 /* Internal buffer must be aligned to the bytes_per_frame. Sometimes,
@@ -268,8 +271,7 @@ struct esp_buffer_s
  * track of the bytes that were not written to the internal buffer yet.
  */
 
-struct esp_buffer_carry_s
-{
+struct esp_buffer_carry_s {
   uint32_t value;
   size_t bytes;
 };
@@ -278,12 +280,11 @@ struct esp_buffer_carry_s
  * transport.
  */
 
-struct esp_transport_s
-{
-  sq_queue_t pend;              /* A queue of pending transfers */
-  sq_queue_t act;               /* A queue of active transfers */
-  sq_queue_t done;              /* A queue of completed transfers */
-  struct work_s work;           /* Supports worker thread operations */
+struct esp_transport_s {
+  sq_queue_t pend;    /* A queue of pending transfers */
+  sq_queue_t act;     /* A queue of active transfers */
+  sq_queue_t done;    /* A queue of completed transfers */
+  struct work_s work; /* Supports worker thread operations */
 
   /* Bytes to be written at the beginning of the next DMA buffer */
 
@@ -292,39 +293,41 @@ struct esp_transport_s
 
 /* The state of the one I2S peripheral */
 
-struct esp_i2s_s
-{
-  struct i2s_dev_s  dev;        /* Externally visible I2S interface */
-  mutex_t           lock;       /* Ensures mutually exclusive access */
-  uint8_t           cpu;        /* CPU ID */
-  spinlock_t        slock;      /* Device specific lock. */
+struct esp_i2s_s {
+  struct i2s_dev_s dev; /* Externally visible I2S interface */
+  mutex_t lock;         /* Ensures mutually exclusive access */
+  uint8_t cpu;          /* CPU ID */
+  spinlock_t slock;     /* Device specific lock. */
 
   /* Port configuration */
 
   const struct esp_i2s_config_s *config;
 
-  uint32_t               mclk_freq;      /* I2S actual master clock */
-  uint32_t               mclk_multiple;  /* The multiple of mclk to the sample rate */
-  uint32_t               channels;       /* Audio channels (1:mono or 2:stereo) */
-  uint32_t               rate;           /* I2S actual configured sample-rate */
-  uint32_t               data_width;     /* I2S actual configured data_width */
-  gdma_channel_handle_t  dma_channel_tx; /* I2S DMA TX channel being used */
-  gdma_channel_handle_t  dma_channel_rx; /* I2S DMA RX channel being used */
+  uint32_t mclk_freq;     /* I2S actual master clock */
+  uint32_t mclk_multiple; /* The multiple of mclk to the sample rate */
+  uint32_t channels;      /* Audio channels (1:mono or 2:stereo) */
+  uint32_t rate;          /* I2S actual configured sample-rate */
+  uint32_t data_width;    /* I2S actual configured data_width */
+  gdma_channel_handle_t dma_channel_tx; /* I2S DMA TX channel being used */
+  gdma_channel_handle_t dma_channel_rx; /* I2S DMA RX channel being used */
 
-  struct esp_transport_s tx;  /* TX transport state */
+  struct esp_transport_s tx; /* TX transport state */
 
-  bool tx_started;                /* TX channel started */
+  bool tx_started; /* TX channel started */
 
-  struct esp_transport_s rx;  /* RX transport state */
+  struct esp_transport_s rx; /* RX transport state */
 
-  bool rx_started;                /* RX channel started */
+  bool rx_started; /* RX channel started */
 
-  bool streaming;                 /* Is I2S peripheral active? */
+  bool streaming; /* Is I2S peripheral active? */
+#ifdef CONFIG_CONTEST2026_128_XIAOZHI_AUDIO_DIAGNOSTICS
+  uint8_t rx_diag_count; /* XiaoZhi RX diagnostics */
+#endif
 
   /* Pre-allocated pool of buffer containers */
 
-  sem_t bufsem;                         /* Buffer wait semaphore */
-  struct esp_buffer_s *bf_freelist;     /* A list a free buffer containers */
+  sem_t bufsem;                     /* Buffer wait semaphore */
+  struct esp_buffer_s *bf_freelist; /* A list a free buffer containers */
   struct esp_buffer_s containers[CONFIG_ESPRESSIF_I2S_MAXINFLIGHT];
 };
 
@@ -335,9 +338,9 @@ struct esp_i2s_s
 /* Register helpers */
 
 #ifdef CONFIG_ESPRESSIF_I2S_DUMPBUFFERS
-#  define       i2s_dump_buffer(m,b,s) lib_dumpbuffer(m,b,s)
+#define i2s_dump_buffer(m, b, s) lib_dumpbuffer(m, b, s)
 #else
-#  define       i2s_dump_buffer(m,b,s)
+#define i2s_dump_buffer(m, b, s)
 #endif
 
 /* I2S configuration */
@@ -346,30 +349,29 @@ static int i2s_configure(struct esp_i2s_s *priv);
 
 /* Buffer container helpers */
 
-static struct esp_buffer_s *
-                i2s_buf_allocate(struct esp_i2s_s *priv);
-static int      i2s_buf_free(struct esp_i2s_s *priv,
-                             struct esp_buffer_s *bfcontainer);
-static int      i2s_buf_initialize(struct esp_i2s_s *priv);
+static struct esp_buffer_s *i2s_buf_allocate(struct esp_i2s_s *priv);
+static int i2s_buf_free(struct esp_i2s_s *priv,
+                        struct esp_buffer_s *bfcontainer);
+static int i2s_buf_initialize(struct esp_i2s_s *priv);
 
 /* I2S DMA setup function */
 
-static uint32_t i2s_common_dma_setup(struct esp_buffer_s *bfcontainer,
-                                     bool tx, uint32_t len);
+static uint32_t i2s_common_dma_setup(struct esp_buffer_s *bfcontainer, bool tx,
+                                     uint32_t len);
 
 /* DMA support */
 
-static IRAM_ATTR int  i2s_txdma_setup(struct esp_i2s_s *priv,
-                                      struct esp_buffer_s *bfcontainer);
-static void           i2s_tx_worker(void *arg);
-static void           i2s_tx_schedule(struct esp_i2s_s *priv,
-                                      lldesc_t *outlink);
+static IRAM_ATTR int i2s_txdma_setup(struct esp_i2s_s *priv,
+                                     struct esp_buffer_s *bfcontainer);
+static IRAM_ATTR int i2s_txdma_continue(struct esp_i2s_s *priv);
+static void i2s_tx_worker(void *arg);
+static void i2s_tx_schedule(struct esp_i2s_s *priv, lldesc_t *outlink);
 
-static IRAM_ATTR int  i2s_rxdma_setup(struct esp_i2s_s *priv,
-                                      struct esp_buffer_s *bfcontainer);
-static void           i2s_rx_worker(void *arg);
-static void           i2s_rx_schedule(struct esp_i2s_s *priv,
-                                      lldesc_t *inlink);
+static IRAM_ATTR int i2s_rxdma_setup(struct esp_i2s_s *priv,
+                                     struct esp_buffer_s *bfcontainer);
+static IRAM_ATTR int i2s_rxdma_continue(struct esp_i2s_s *priv);
+static void i2s_rx_worker(void *arg);
+static void i2s_rx_schedule(struct esp_i2s_s *priv, lldesc_t *inlink);
 
 /* I2S methods (and close friends) */
 #if SOC_I2S_SUPPORTS_APLL
@@ -377,122 +379,108 @@ static uint32_t i2s_set_get_apll_freq(uint32_t mclk_freq_hz);
 #endif
 static uint32_t i2s_get_source_clk_freq(i2s_clock_src_t clk_src,
                                         uint32_t mclk_freq_hz);
-static int32_t  i2s_check_mclkfrequency(struct esp_i2s_s *priv);
+static int32_t i2s_check_mclkfrequency(struct esp_i2s_s *priv);
 static uint32_t i2s_set_datawidth(struct esp_i2s_s *priv);
-static int      i2s_set_clock(struct esp_i2s_s *priv);
+static int i2s_set_clock(struct esp_i2s_s *priv);
 static uint32_t i2s_getmclkfrequency(struct i2s_dev_s *dev);
-static uint32_t i2s_setmclkfrequency(struct i2s_dev_s *dev,
-                                     uint32_t frequency);
-static int      i2s_ioctl(struct i2s_dev_s *dev, int cmd, unsigned long arg);
+static uint32_t i2s_setmclkfrequency(struct i2s_dev_s *dev, uint32_t frequency);
+static int i2s_ioctl(struct i2s_dev_s *dev, int cmd, unsigned long arg);
 
-static void     i2s_tx_channel_start(struct esp_i2s_s *priv);
-static int      i2s_tx_channel_stop(struct esp_i2s_s *priv);
-static int      i2s_txchannels(struct i2s_dev_s *dev, uint8_t channels);
+static void i2s_tx_channel_start(struct esp_i2s_s *priv);
+static int i2s_tx_channel_stop(struct esp_i2s_s *priv);
+static int i2s_txchannels(struct i2s_dev_s *dev, uint8_t channels);
 static uint32_t i2s_txsamplerate(struct i2s_dev_s *dev, uint32_t rate);
 static uint32_t i2s_txdatawidth(struct i2s_dev_s *dev, int bits);
-static int      i2s_send(struct i2s_dev_s *dev, struct ap_buffer_s *apb,
-                         i2s_callback_t callback, void *arg,
-                         uint32_t timeout);
+static int i2s_send(struct i2s_dev_s *dev, struct ap_buffer_s *apb,
+                    i2s_callback_t callback, void *arg, uint32_t timeout);
 
-static void     i2s_rx_channel_start(struct esp_i2s_s *priv);
-static int      i2s_rx_channel_stop(struct esp_i2s_s *priv);
-static bool     i2s_tx_error(gdma_channel_handle_t dma_chan,
-                             gdma_event_data_t *event_data,
-                             void *arg);
-static bool     i2s_rx_error(gdma_channel_handle_t dma_chan,
-                             gdma_event_data_t *event_data,
-                             void *arg);
+static void i2s_rx_channel_start(struct esp_i2s_s *priv);
+static int i2s_rx_channel_stop(struct esp_i2s_s *priv);
+static bool i2s_tx_error(gdma_channel_handle_t dma_chan,
+                         gdma_event_data_t *event_data, void *arg);
+static bool i2s_rx_error(gdma_channel_handle_t dma_chan,
+                         gdma_event_data_t *event_data, void *arg);
 
-static int      i2s_rxchannels(struct i2s_dev_s *dev, uint8_t channels);
+static int i2s_rxchannels(struct i2s_dev_s *dev, uint8_t channels);
 static uint32_t i2s_rxsamplerate(struct i2s_dev_s *dev, uint32_t rate);
 static uint32_t i2s_rxdatawidth(struct i2s_dev_s *dev, int bits);
-static int      i2s_receive(struct i2s_dev_s *dev, struct ap_buffer_s *apb,
-                            i2s_callback_t callback, void *arg,
-                            uint32_t timeout);
+static int i2s_receive(struct i2s_dev_s *dev, struct ap_buffer_s *apb,
+                       i2s_callback_t callback, void *arg, uint32_t timeout);
 
 /****************************************************************************
  * Private Data
  ****************************************************************************/
 
-static const struct i2s_ops_s g_i2sops =
-{
-  .i2s_txchannels     = i2s_txchannels,
-  .i2s_txsamplerate   = i2s_txsamplerate,
-  .i2s_txdatawidth    = i2s_txdatawidth,
-  .i2s_send           = i2s_send,
+static const struct i2s_ops_s g_i2sops = {
+    .i2s_txchannels = i2s_txchannels,
+    .i2s_txsamplerate = i2s_txsamplerate,
+    .i2s_txdatawidth = i2s_txdatawidth,
+    .i2s_send = i2s_send,
 
-  .i2s_rxchannels     = i2s_rxchannels,
-  .i2s_rxsamplerate   = i2s_rxsamplerate,
-  .i2s_rxdatawidth    = i2s_rxdatawidth,
-  .i2s_receive        = i2s_receive,
+    .i2s_rxchannels = i2s_rxchannels,
+    .i2s_rxsamplerate = i2s_rxsamplerate,
+    .i2s_rxdatawidth = i2s_rxdatawidth,
+    .i2s_receive = i2s_receive,
 
-  .i2s_ioctl             = i2s_ioctl,
-  .i2s_getmclkfrequency  = i2s_getmclkfrequency,
-  .i2s_setmclkfrequency  = i2s_setmclkfrequency,
+    .i2s_ioctl = i2s_ioctl,
+    .i2s_getmclkfrequency = i2s_getmclkfrequency,
+    .i2s_setmclkfrequency = i2s_setmclkfrequency,
 };
 
 #ifdef CONFIG_ESPRESSIF_I2S0
 
-i2s_hal_context_t ctx_i2s0 =
-{
-  0
-};
+i2s_hal_context_t ctx_i2s0 = {0};
 
-i2s_hal_clock_info_t clk_info_i2s0 =
-{
-  0
-};
+i2s_hal_clock_info_t clk_info_i2s0 = {0};
 
-static struct esp_i2s_config_s esp_i2s0_config =
-{
-  .port             = 0,
+static struct esp_i2s_config_s esp_i2s0_config = {
+    .port = 0,
 #ifdef CONFIG_ESPRESSIF_I2S0_ROLE_MASTER
-  .role             = I2S_ROLE_MASTER,
+    .role = I2S_ROLE_MASTER,
 #else
-  .role             = I2S_ROLE_SLAVE,
+    .role = I2S_ROLE_SLAVE,
 #endif /* CONFIG_ESPRESSIF_I2S0_ROLE_MASTER */
-  .data_width       = ESPRESSIF_I2S0_DATA_BIT_WIDTH,
-  .rate             = CONFIG_ESPRESSIF_I2S0_SAMPLE_RATE,
-  .total_slot       = 2,
-  .tx_en            = I2S0_TX_ENABLED,
-  .rx_en            = I2S0_RX_ENABLED,
-  .tx_clk_src       = I2S_CLK_SRC_DEFAULT,
-  .rx_clk_src       = I2S_CLK_SRC_DEFAULT,
+    .data_width = ESPRESSIF_I2S0_DATA_BIT_WIDTH,
+    .rate = CONFIG_ESPRESSIF_I2S0_SAMPLE_RATE,
+    .total_slot = 2,
+    .tx_en = I2S0_TX_ENABLED,
+    .rx_en = I2S0_RX_ENABLED,
+    .tx_clk_src = I2S_CLK_SRC_DEFAULT,
+    .rx_clk_src = I2S_CLK_SRC_DEFAULT,
 #ifdef CONFIG_ESPRESSIF_I2S0_MCLK
-  .mclk_pin         = CONFIG_ESPRESSIF_I2S0_MCLKPIN,
+    .mclk_pin = CONFIG_ESPRESSIF_I2S0_MCLKPIN,
 #else
-  .mclk_pin         = I2S_GPIO_UNUSED,
+    .mclk_pin = I2S_GPIO_UNUSED,
 #endif /* CONFIG_ESPRESSIF_I2S0_MCLK */
-  .bclk_pin         = CONFIG_ESPRESSIF_I2S0_BCLKPIN,
-  .ws_pin           = CONFIG_ESPRESSIF_I2S0_WSPIN,
+    .bclk_pin = CONFIG_ESPRESSIF_I2S0_BCLKPIN,
+    .ws_pin = CONFIG_ESPRESSIF_I2S0_WSPIN,
 #ifdef CONFIG_ESPRESSIF_I2S0_DOUTPIN
-  .dout_pin         = CONFIG_ESPRESSIF_I2S0_DOUTPIN,
+    .dout_pin = CONFIG_ESPRESSIF_I2S0_DOUTPIN,
 #else
-  .dout_pin         = I2S_GPIO_UNUSED,
+    .dout_pin = I2S_GPIO_UNUSED,
 #endif /* CONFIG_ESPRESSIF_I2S0_DOUTPIN */
 #ifdef CONFIG_ESPRESSIF_I2S0_DINPIN
-  .din_pin          = CONFIG_ESPRESSIF_I2S0_DINPIN,
+    .din_pin = CONFIG_ESPRESSIF_I2S0_DINPIN,
 #else
-  .din_pin          = I2S_GPIO_UNUSED,
+    .din_pin = I2S_GPIO_UNUSED,
 #endif /* CONFIG_ESPRESSIF_I2S0_DINPIN */
-  .audio_std_mode   = I2S_TDM_PHILIPS,
-  .ctx              = &ctx_i2s0,
-  .clk_info         = &clk_info_i2s0,
+    .audio_std_mode = I2S_TDM_PHILIPS,
+    .ctx = &ctx_i2s0,
+    .clk_info = &clk_info_i2s0,
 #ifdef CONFIG_PM
-  .pm_lock          = NULL,
+    .pm_lock = NULL,
 #endif
 };
 
-static struct esp_i2s_s esp_i2s0_priv =
-{
-  .dev =
-  {
-    .ops = &g_i2sops,
-  },
-  .lock = NXMUTEX_INITIALIZER,
-  .slock = SP_UNLOCKED,
-  .config = &esp_i2s0_config,
-  .bufsem = SEM_INITIALIZER(0),
+static struct esp_i2s_s esp_i2s0_priv = {
+    .dev =
+        {
+            .ops = &g_i2sops,
+        },
+    .lock = NXMUTEX_INITIALIZER,
+    .slock = SP_UNLOCKED,
+    .config = &esp_i2s0_config,
+    .bufsem = SEM_INITIALIZER(0),
 };
 #endif /* CONFIG_ESPRESSIF_I2S0 */
 
@@ -520,8 +508,7 @@ static struct esp_i2s_s esp_i2s0_priv =
  *
  ****************************************************************************/
 
-static struct esp_buffer_s *i2s_buf_allocate(struct esp_i2s_s *priv)
-{
+static struct esp_buffer_s *i2s_buf_allocate(struct esp_i2s_s *priv) {
   struct esp_buffer_s *bfcontainer;
   irqstate_t flags;
   int ret;
@@ -533,10 +520,9 @@ static struct esp_buffer_s *i2s_buf_allocate(struct esp_i2s_s *priv)
    */
 
   ret = nxsem_wait_uninterruptible(&priv->bufsem);
-  if (ret < 0)
-    {
-      return NULL;
-    }
+  if (ret < 0) {
+    return NULL;
+  }
 
   /* Get the buffer from the head of the free list */
 
@@ -545,17 +531,16 @@ static struct esp_buffer_s *i2s_buf_allocate(struct esp_i2s_s *priv)
   DEBUGASSERT(bfcontainer);
 
 #if SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE
-  alignment = cache_hal_get_cache_line_size(CACHE_LL_LEVEL_INT_MEM,
-                                            CACHE_TYPE_DATA);
+  alignment =
+      cache_hal_get_cache_line_size(CACHE_LL_LEVEL_INT_MEM, CACHE_TYPE_DATA);
 #else
   alignment = sizeof(uint32_t);
 #endif
 
-  for (i = 0; i < I2S_DMADESC_NUM; i++)
-    {
-      size_t size = ALIGN_UP(sizeof(lldesc_t), alignment);
-      bfcontainer->dma_link[i] = (lldesc_t *)kmm_memalign(alignment, size);
-    }
+  for (i = 0; i < I2S_DMADESC_NUM; i++) {
+    size_t size = ALIGN_UP(sizeof(lldesc_t), alignment);
+    bfcontainer->dma_link[i] = (lldesc_t *)kmm_memalign(alignment, size);
+  }
 
   /* Unlink the buffer from the freelist */
 
@@ -583,8 +568,7 @@ static struct esp_buffer_s *i2s_buf_allocate(struct esp_i2s_s *priv)
  ****************************************************************************/
 
 static int i2s_buf_free(struct esp_i2s_s *priv,
-                        struct esp_buffer_s *bfcontainer)
-{
+                        struct esp_buffer_s *bfcontainer) {
   irqstate_t flags;
   int i;
 
@@ -592,16 +576,15 @@ static int i2s_buf_free(struct esp_i2s_s *priv,
 
   flags = spin_lock_irqsave(&priv->slock);
 
-  for (i = 0; i < I2S_DMADESC_NUM; i++)
-    {
-      kmm_free(bfcontainer->dma_link[i]);
-      bfcontainer->dma_link[i] = NULL;
-    }
+  for (i = 0; i < I2S_DMADESC_NUM; i++) {
+    kmm_free(bfcontainer->dma_link[i]);
+    bfcontainer->dma_link[i] = NULL;
+  }
 
   bfcontainer->apb = NULL;
   bfcontainer->buf = NULL;
   bfcontainer->nbytes = 0;
-  bfcontainer->flink  = priv->bf_freelist;
+  bfcontainer->flink = priv->bf_freelist;
   priv->bf_freelist = bfcontainer;
 
   spin_unlock_irqrestore(&priv->slock, flags);
@@ -630,23 +613,20 @@ static int i2s_buf_free(struct esp_i2s_s *priv,
  *
  ****************************************************************************/
 
-static int i2s_buf_initialize(struct esp_i2s_s *priv)
-{
+static int i2s_buf_initialize(struct esp_i2s_s *priv) {
   int ret;
 
   priv->tx.carry.bytes = 0;
   priv->tx.carry.value = 0;
 
   priv->bf_freelist = NULL;
-  for (int i = 0; i < CONFIG_ESPRESSIF_I2S_MAXINFLIGHT; i++)
-    {
-      ret = i2s_buf_free(priv, &priv->containers[i]);
-      if (ret < 0)
-        {
-          i2serr("Failed to free buffer container: %d\n", ret);
-          return ret;
-        }
+  for (int i = 0; i < CONFIG_ESPRESSIF_I2S_MAXINFLIGHT; i++) {
+    ret = i2s_buf_free(priv, &priv->containers[i]);
+    if (ret < 0) {
+      i2serr("Failed to free buffer container: %d\n", ret);
+      return ret;
     }
+  }
 
   return OK;
 }
@@ -669,9 +649,8 @@ static int i2s_buf_initialize(struct esp_i2s_s *priv)
  *
  ****************************************************************************/
 
-static uint32_t i2s_common_dma_setup(struct esp_buffer_s *bfcontainer,
-                                     bool tx, uint32_t len)
-{
+static uint32_t i2s_common_dma_setup(struct esp_buffer_s *bfcontainer, bool tx,
+                                     uint32_t len) {
   int i;
   uint32_t bytes = len;
   uint8_t *pdata = bfcontainer->buf;
@@ -684,48 +663,43 @@ static uint32_t i2s_common_dma_setup(struct esp_buffer_s *bfcontainer,
   DEBUGASSERT(bfcontainer->buf != NULL);
   DEBUGASSERT(len > 0);
 
-  for (i = 0; i < I2S_DMADESC_NUM; i++)
-    {
-      data_len = MIN(bytes, I2S_DMA_BUFFER_MAX_SIZE);
+  for (i = 0; i < I2S_DMADESC_NUM; i++) {
+    data_len = MIN(bytes, I2S_DMA_BUFFER_MAX_SIZE);
 
-      /* Buffer length must be rounded to next 32-bit boundary. */
+    /* Buffer length must be rounded to next 32-bit boundary. */
 
-      buf_len = ALIGN_UP(data_len, sizeof(uintptr_t));
+    buf_len = ALIGN_UP(data_len, sizeof(uintptr_t));
 
-      dma_desc = bfcontainer->dma_link[i];
-      dma_desc->size = buf_len;
-      dma_desc->length = tx ? data_len : 0;
-      dma_desc->owner = DMA_DESCRIPTOR_BUFFER_OWNER_DMA;
-      dma_desc->buf = pdata;
-      dma_desc->eof = 0;
-      dma_desc->sosf = 0;
-      dma_desc->offset = 0;
+    dma_desc = bfcontainer->dma_link[i];
+    dma_desc->size = buf_len;
+    dma_desc->length = tx ? data_len : 0;
+    dma_desc->owner = DMA_DESCRIPTOR_BUFFER_OWNER_DMA;
+    dma_desc->buf = pdata;
+    dma_desc->eof = 0;
+    dma_desc->sosf = 0;
+    dma_desc->offset = 0;
 
-      /* Link to the next descriptor */
+    /* Link to the next descriptor */
 
-      if (i < (I2S_DMADESC_NUM - 1))
-        {
-          STAILQ_NEXT(dma_desc, qe) = bfcontainer->dma_link[i + 1];
-        }
-      else
-        {
-          STAILQ_NEXT(dma_desc, qe) = NULL;
-        }
+    if (i < (I2S_DMADESC_NUM - 1)) {
+      STAILQ_NEXT(dma_desc, qe) = bfcontainer->dma_link[i + 1];
+    } else {
+      STAILQ_NEXT(dma_desc, qe) = NULL;
+    }
 
 #if SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE
-      esp_cache_msync(dma_desc, sizeof(lldesc_t),
-                      ESP_CACHE_MSYNC_FLAG_DIR_C2M | \
-                      ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+    esp_cache_msync(dma_desc, sizeof(lldesc_t),
+                    ESP_CACHE_MSYNC_FLAG_DIR_C2M |
+                        ESP_CACHE_MSYNC_FLAG_UNALIGNED);
 #endif
 
-      bytes -= data_len;
-      if (bytes == 0)
-        {
-          break;
-        }
-
-      pdata += data_len;
+    bytes -= data_len;
+    if (bytes == 0) {
+      break;
     }
+
+    pdata += data_len;
+  }
 
   /* Set EOF flag on the last descriptor */
 
@@ -737,8 +711,8 @@ static uint32_t i2s_common_dma_setup(struct esp_buffer_s *bfcontainer,
 
 #if SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE
   esp_cache_msync(dma_desc, sizeof(lldesc_t),
-                  ESP_CACHE_MSYNC_FLAG_DIR_C2M | \
-                  ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+                  ESP_CACHE_MSYNC_FLAG_DIR_C2M |
+                      ESP_CACHE_MSYNC_FLAG_UNALIGNED);
 #endif
 
   return len - bytes;
@@ -762,8 +736,7 @@ static uint32_t i2s_common_dma_setup(struct esp_buffer_s *bfcontainer,
  *
  ****************************************************************************/
 
-static int IRAM_ATTR i2s_txdma_start(struct esp_i2s_s *priv)
-{
+static int IRAM_ATTR i2s_txdma_start(struct esp_i2s_s *priv) {
   struct esp_buffer_s *bfcontainer;
   esp_err_t err;
 
@@ -771,28 +744,25 @@ static int IRAM_ATTR i2s_txdma_start(struct esp_i2s_s *priv)
    * returning success.
    */
 
-  if (!sq_empty(&priv->tx.act))
-    {
-      return OK;
-    }
+  if (!sq_empty(&priv->tx.act)) {
+    return OK;
+  }
 
   /* If there are no pending transfer, then bail returning success */
 
-  if (sq_empty(&priv->tx.pend))
-    {
-      return OK;
-    }
+  if (sq_empty(&priv->tx.pend)) {
+    return OK;
+  }
 
   i2s_hal_tx_reset(priv->config->ctx);
 
   /* Reset the DMA operation */
 
   err = gdma_reset(priv->dma_channel_tx);
-  if (err != ESP_OK)
-    {
-      i2serr("Failed to reset DMA channel: %d\n", err);
-      return -EINVAL;
-    }
+  if (err != ESP_OK) {
+    i2serr("Failed to reset DMA channel: %d\n", err);
+    return -EINVAL;
+  }
 
   /* Reset TX FIFO */
 
@@ -803,17 +773,55 @@ static int IRAM_ATTR i2s_txdma_start(struct esp_i2s_s *priv)
   bfcontainer = (struct esp_buffer_s *)sq_remfirst(&priv->tx.pend);
 
   err = gdma_start(priv->dma_channel_tx, (intptr_t)bfcontainer->dma_link[0]);
-  if (err != ESP_OK)
-    {
-      i2serr("Failed to start DMA channel: %d\n", err);
-      return -EINVAL;
-    }
+  if (err != ESP_OK) {
+    i2serr("Failed to start DMA channel: %d\n", err);
+    return -EINVAL;
+  }
 
   i2s_hal_tx_start(priv->config->ctx);
 
   priv->tx_started = true;
 
   sq_addlast((sq_entry_t *)bfcontainer, &priv->tx.act);
+
+  return OK;
+}
+
+/****************************************************************************
+ * Name: i2s_txdma_continue
+ *
+ * Description:
+ *   Continue TX with an already prepared pending buffer after a descriptor
+ *   EOF.  Unlike the initial-start path, this deliberately preserves the
+ *   running I2S channel and FIFO.  ESP-IDF uses a permanently running
+ *   circular descriptor ring and likewise does not reset the peripheral at
+ *   each buffer boundary.
+ *
+ ****************************************************************************/
+
+static int IRAM_ATTR i2s_txdma_continue(struct esp_i2s_s *priv) {
+  struct esp_buffer_s *bfcontainer;
+  esp_err_t err;
+
+  if (!sq_empty(&priv->tx.act) || sq_empty(&priv->tx.pend)) {
+    return OK;
+  }
+
+  bfcontainer = (struct esp_buffer_s *)sq_remfirst(&priv->tx.pend);
+  sq_addlast((sq_entry_t *)bfcontainer, &priv->tx.act);
+
+  /* GDMA has reached an EOF descriptor whose next link is NULL.  Restart
+   * only the outlink at the next prepared descriptor.  Resetting GDMA, I2S
+   * or the FIFO here discards live samples and creates an audible pop.
+   */
+
+  err = gdma_start(priv->dma_channel_tx, (intptr_t)bfcontainer->dma_link[0]);
+  if (err != ESP_OK) {
+    sq_remfirst(&priv->tx.act);
+    sq_addfirst((sq_entry_t *)bfcontainer, &priv->tx.pend);
+    i2serr("Failed to continue DMA channel: %d\n", err);
+    return -EINVAL;
+  }
 
   return OK;
 }
@@ -836,8 +844,7 @@ static int IRAM_ATTR i2s_txdma_start(struct esp_i2s_s *priv)
  *
  ****************************************************************************/
 
-static int i2s_rxdma_start(struct esp_i2s_s *priv)
-{
+static int i2s_rxdma_start(struct esp_i2s_s *priv) {
   struct esp_buffer_s *bfcontainer;
   size_t eof_nbytes;
   esp_err_t err;
@@ -846,28 +853,25 @@ static int i2s_rxdma_start(struct esp_i2s_s *priv)
    * returning success.
    */
 
-  if (!sq_empty(&priv->rx.act))
-    {
-      return OK;
-    }
+  if (!sq_empty(&priv->rx.act)) {
+    return OK;
+  }
 
   /* If there are no pending transfer, then bail returning success */
 
-  if (sq_empty(&priv->rx.pend))
-    {
-      return OK;
-    }
+  if (sq_empty(&priv->rx.pend)) {
+    return OK;
+  }
 
   i2s_hal_rx_reset(priv->config->ctx);
 
   /* Reset the DMA operation */
 
   err = gdma_reset(priv->dma_channel_rx);
-  if (err != ESP_OK)
-    {
-      i2serr("Failed to reset DMA channel: %d\n", err);
-      return -EINVAL;
-    }
+  if (err != ESP_OK) {
+    i2serr("Failed to reset DMA channel: %d\n", err);
+    return -EINVAL;
+  }
 
   /* Reset RX FIFO */
 
@@ -884,17 +888,77 @@ static int i2s_rxdma_start(struct esp_i2s_s *priv)
    */
 
   err = gdma_start(priv->dma_channel_rx, (intptr_t)bfcontainer->dma_link[0]);
-  if (err != ESP_OK)
-    {
-      i2serr("Failed to start DMA channel: %d\n", err);
-      return -EINVAL;
-    }
+  if (err != ESP_OK) {
+    i2serr("Failed to start DMA channel: %d\n", err);
+    return -EINVAL;
+  }
+
+  /* In full-duplex master mode the external BCLK and WS pins are sourced
+   * from the TX channel and shared with RX.  A capture-only client has no TX
+   * DMA buffer to start that channel, so explicitly start the TX clock
+   * generator before RX.  The RX worker already contains the matching logic
+   * that stops this idle TX channel after the last RX buffer completes.
+   */
+
+  if (priv->config->role == I2S_ROLE_MASTER && priv->config->tx_en &&
+      !priv->tx_started) {
+    /* TX_STOP_EN defaults to one on ESP32-P4, which suppresses BCLK and
+     * WS as soon as the TX FIFO is empty.  RX uses the TX clock generator
+     * in full-duplex master mode, so keep the clocks running even though
+     * a capture-only stream has no TX DMA payload.
+     */
+
+    modifyreg32(I2S_TX_CONF_REG(priv->config->port), I2S_TX_STOP_EN, 0);
+    i2s_tx_channel_start(priv);
+  }
 
   i2s_hal_rx_start(priv->config->ctx);
 
   priv->rx_started = true;
 
   sq_addlast((sq_entry_t *)bfcontainer, &priv->rx.act);
+
+  return OK;
+}
+
+/****************************************************************************
+ * Name: i2s_rxdma_continue
+ *
+ * Description:
+ *   Continue RX with an already prepared pending buffer after a descriptor
+ *   EOF.  The I2S RX channel and FIFO remain running across adjacent
+ *   buffers, matching ESP-IDF's circular RX DMA operation.  The cold-start
+ *   path remains responsible for recovery after a real queue underrun.
+ *
+ ****************************************************************************/
+
+static int IRAM_ATTR i2s_rxdma_continue(struct esp_i2s_s *priv) {
+  struct esp_buffer_s *bfcontainer;
+  size_t eof_nbytes;
+  esp_err_t err;
+
+  if (!sq_empty(&priv->rx.act) || sq_empty(&priv->rx.pend)) {
+    return OK;
+  }
+
+  bfcontainer = (struct esp_buffer_s *)sq_remfirst(&priv->rx.pend);
+  sq_addlast((sq_entry_t *)bfcontainer, &priv->rx.act);
+
+  eof_nbytes = MIN(bfcontainer->nbytes, I2S_DMA_BUFFER_MAX_SIZE);
+  i2s_ll_rx_set_eof_num(priv->config->ctx->dev, eof_nbytes);
+
+  /* GDMA stopped at an EOF descriptor whose next link is NULL.  Start the
+   * next prepared inlink without resetting GDMA, RX or the FIFO; IDF keeps
+   * the equivalent descriptors in a permanently running circular ring.
+   */
+
+  err = gdma_start(priv->dma_channel_rx, (intptr_t)bfcontainer->dma_link[0]);
+  if (err != ESP_OK) {
+    sq_remfirst(&priv->rx.act);
+    sq_addfirst((sq_entry_t *)bfcontainer, &priv->rx.pend);
+    i2serr("Failed to continue RX DMA channel: %d\n", err);
+    return -EINVAL;
+  }
 
   return OK;
 }
@@ -918,8 +982,7 @@ static int i2s_rxdma_start(struct esp_i2s_s *priv)
  ****************************************************************************/
 
 static IRAM_ATTR int i2s_txdma_setup(struct esp_i2s_s *priv,
-                                     struct esp_buffer_s *bfcontainer)
-{
+                                     struct esp_buffer_s *bfcontainer) {
   int ret = OK;
   size_t carry_size;
   uint32_t bytes_queued;
@@ -953,8 +1016,8 @@ static IRAM_ATTR int i2s_txdma_setup(struct esp_i2s_s *priv,
   /* bufsize need to align with cache line size */
 
   bufsize = samp_size;
-  alignment = cache_hal_get_cache_line_size(CACHE_LL_LEVEL_INT_MEM,
-                                            CACHE_TYPE_DATA);
+  alignment =
+      cache_hal_get_cache_line_size(CACHE_LL_LEVEL_INT_MEM, CACHE_TYPE_DATA);
 
   /* First, calculate if the buffer contains a complete sample */
 
@@ -971,11 +1034,10 @@ static IRAM_ATTR int i2s_txdma_setup(struct esp_i2s_s *priv,
    * toggle the sign to search for the floor aligned size.
    */
 
-  for (; bufsize % alignment != 0; aligned_frame_num--)
-    {
-      bufsize = aligned_frame_num * bytes_per_frame;
-      carry_size += bytes_per_frame;
-    }
+  for (; bufsize % alignment != 0; aligned_frame_num--) {
+    bufsize = aligned_frame_num * bytes_per_frame;
+    carry_size += bytes_per_frame;
+  }
 
   DEBUGASSERT((samp_size - carry_size) % alignment == 0);
 
@@ -991,12 +1053,14 @@ static IRAM_ATTR int i2s_txdma_setup(struct esp_i2s_s *priv,
    */
 
   bfcontainer->buf = kmm_memalign(alignment, bfcontainer->nbytes);
-  if (bfcontainer->buf == NULL)
-    {
-      i2serr("Failed to allocate the DMA internal buffer "
-             "[%" PRIu32 " bytes]", bfcontainer->nbytes);
-      return -ENOMEM;
-    }
+  if (bfcontainer->buf == NULL) {
+    xiaozhi_aerr("failed to allocate TX DMA buffer [%" PRIu32 " bytes]\n",
+                 bfcontainer->nbytes);
+    i2serr("Failed to allocate the DMA internal buffer "
+           "[%" PRIu32 " bytes]",
+           bfcontainer->nbytes);
+    return -ENOMEM;
+  }
 
   data_copied = 0;
   buf = bfcontainer->buf;
@@ -1008,16 +1072,15 @@ static IRAM_ATTR int i2s_txdma_setup(struct esp_i2s_s *priv,
    * buffer.
    */
 
-  if (priv->tx.carry.bytes)
-    {
-      memcpy(buf, &priv->tx.carry.value, priv->tx.carry.bytes);
-      buf += priv->tx.carry.bytes;
-      data_copied += priv->tx.carry.bytes;
-      memcpy(buf, samp, (bytes_per_frame - priv->tx.carry.bytes));
-      buf += (bytes_per_frame - priv->tx.carry.bytes);
-      samp += (bytes_per_frame - priv->tx.carry.bytes);
-      data_copied += (bytes_per_frame - priv->tx.carry.bytes);
-    }
+  if (priv->tx.carry.bytes) {
+    memcpy(buf, &priv->tx.carry.value, priv->tx.carry.bytes);
+    buf += priv->tx.carry.bytes;
+    data_copied += priv->tx.carry.bytes;
+    memcpy(buf, samp, (bytes_per_frame - priv->tx.carry.bytes));
+    buf += (bytes_per_frame - priv->tx.carry.bytes);
+    samp += (bytes_per_frame - priv->tx.carry.bytes);
+    data_copied += (bytes_per_frame - priv->tx.carry.bytes);
+  }
 
   /* Copy the upper half buffer to the internal buffer considering that
    * the current upper half buffer may not contain a complete sample at
@@ -1038,30 +1101,25 @@ static IRAM_ATTR int i2s_txdma_setup(struct esp_i2s_s *priv,
    */
 
   priv->tx.carry.bytes = carry_size;
-  if (priv->tx.carry.bytes)
-    {
-      memcpy((uint8_t *)&priv->tx.carry.value, samp, priv->tx.carry.bytes);
-    }
+  if (priv->tx.carry.bytes) {
+    memcpy((uint8_t *)&priv->tx.carry.value, samp, priv->tx.carry.bytes);
+  }
 
 #if SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE
-  esp_cache_msync((void *)bfcontainer->buf,
-                  bfcontainer->nbytes,
+  esp_cache_msync((void *)bfcontainer->buf, bfcontainer->nbytes,
                   ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 #endif
 
   /* Configure DMA stream */
 
-  bytes_queued = i2s_common_dma_setup(bfcontainer,
-                                      true,
-                                      bfcontainer->nbytes);
+  bytes_queued = i2s_common_dma_setup(bfcontainer, true, bfcontainer->nbytes);
 
-  if (bytes_queued != bfcontainer->nbytes)
-    {
-      i2serr("Failed to enqueue I2S buffer "
-             "(%" PRIu32 " bytes of %" PRIu32 ")\n",
-             bytes_queued, bfcontainer->nbytes);
-      return -bytes_queued;
-    }
+  if (bytes_queued != bfcontainer->nbytes) {
+    i2serr("Failed to enqueue I2S buffer "
+           "(%" PRIu32 " bytes of %" PRIu32 ")\n",
+           bytes_queued, bfcontainer->nbytes);
+    return -bytes_queued;
+  }
 
   flags = spin_lock_irqsave(&priv->slock);
 
@@ -1097,8 +1155,7 @@ static IRAM_ATTR int i2s_txdma_setup(struct esp_i2s_s *priv,
  ****************************************************************************/
 
 static IRAM_ATTR int i2s_rxdma_setup(struct esp_i2s_s *priv,
-                                     struct esp_buffer_s *bfcontainer)
-{
+                                     struct esp_buffer_s *bfcontainer) {
   int ret = OK;
   uint32_t bytes_queued;
   irqstate_t flags;
@@ -1109,34 +1166,38 @@ static IRAM_ATTR int i2s_rxdma_setup(struct esp_i2s_s *priv,
 #if SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE
   /* bufsize need to align with cache line size */
 
-  alignment = cache_hal_get_cache_line_size(CACHE_LL_LEVEL_INT_MEM,
-                                            CACHE_TYPE_DATA);
+  alignment =
+      cache_hal_get_cache_line_size(CACHE_LL_LEVEL_INT_MEM, CACHE_TYPE_DATA);
 #else
   alignment = sizeof(uint32_t);
 #endif
 
   bfcontainer->buf = kmm_memalign(alignment, bfcontainer->nbytes);
+  if (bfcontainer->buf == NULL) {
+    xiaozhi_aerr("failed to allocate RX DMA buffer [%" PRIu32 " bytes]\n",
+                 bfcontainer->nbytes);
+    i2serr("Failed to allocate the DMA internal buffer "
+           "[%" PRIu32 " bytes]",
+           bfcontainer->nbytes);
+    return -ENOMEM;
+  }
 
 #if SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE
-  esp_cache_msync((void *)bfcontainer,
-                  sizeof(struct esp_buffer_s),
-                  (ESP_CACHE_MSYNC_FLAG_DIR_C2M |
-                   ESP_CACHE_MSYNC_FLAG_UNALIGNED));
+  esp_cache_msync(
+      (void *)bfcontainer, sizeof(struct esp_buffer_s),
+      (ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED));
 #endif
 
   /* Configure DMA stream */
 
-  bytes_queued = i2s_common_dma_setup(bfcontainer,
-                                      false,
-                                      bfcontainer->nbytes);
+  bytes_queued = i2s_common_dma_setup(bfcontainer, false, bfcontainer->nbytes);
 
-  if (bytes_queued != bfcontainer->nbytes)
-    {
-      i2serr("Failed to enqueue I2S buffer "
-             "(%" PRIu32 " bytes of %" PRIu32 ")\n",
-             bytes_queued, bfcontainer->nbytes);
-      return -bytes_queued;
-    }
+  if (bytes_queued != bfcontainer->nbytes) {
+    i2serr("Failed to enqueue I2S buffer "
+           "(%" PRIu32 " bytes of %" PRIu32 ")\n",
+           bytes_queued, bfcontainer->nbytes);
+    return -bytes_queued;
+  }
 
   flags = spin_lock_irqsave(&priv->slock);
 
@@ -1173,8 +1234,7 @@ static IRAM_ATTR int i2s_rxdma_setup(struct esp_i2s_s *priv,
  ****************************************************************************/
 
 static void IRAM_ATTR i2s_tx_schedule(struct esp_i2s_s *priv,
-                                      lldesc_t *outlink)
-{
+                                      lldesc_t *outlink) {
   struct esp_buffer_s *bfcontainer;
   lldesc_t *bfdesc;
   int ret;
@@ -1185,67 +1245,64 @@ static void IRAM_ATTR i2s_tx_schedule(struct esp_i2s_s *priv,
 
   /* Move all entries from the tx.act queue to the tx.done queue */
 
-  if (!sq_empty(&priv->tx.act))
-    {
-      /* Remove the next buffer container from the tx.act list */
+  if (!sq_empty(&priv->tx.act)) {
+    /* Remove the next buffer container from the tx.act list */
 
-      bfcontainer = (struct esp_buffer_s *)sq_peek(&priv->tx.act);
+    bfcontainer = (struct esp_buffer_s *)sq_peek(&priv->tx.act);
 
-      /* Check if the DMA descriptor that generated an EOF interrupt is the
-       * last descriptor of the current buffer container's DMA outlink.
-       * REVISIT: what to do if we miss synchronization and the descriptor
-       * that generated the interrupt is different from the expected (the
-       * oldest of the list containing active transmissions)?
+    /* Check if the DMA descriptor that generated an EOF interrupt is the
+     * last descriptor of the current buffer container's DMA outlink.
+     * REVISIT: what to do if we miss synchronization and the descriptor
+     * that generated the interrupt is different from the expected (the
+     * oldest of the list containing active transmissions)?
+     */
+
+    bfdesc = bfcontainer->dma_link[0];
+
+    while (bfdesc != NULL && bfdesc->eof == 0) {
+      bfdesc = STAILQ_NEXT(bfdesc, qe);
+    }
+
+    if (bfdesc == outlink) {
+      sq_remfirst(&priv->tx.act);
+
+      /* Report the result of the transfer */
+
+      bfcontainer->result = OK;
+
+      /* Add the completed buffer container to the tail of the tx.done
+       * queue
        */
 
-      bfdesc = bfcontainer->dma_link[0];
+      sq_addlast((sq_entry_t *)bfcontainer, &priv->tx.done);
 
-      while (bfdesc->eof == 0 && bfdesc != NULL)
-        {
-          bfdesc = STAILQ_NEXT(bfdesc, qe);
-        }
+      /* Check if the DMA is IDLE */
 
-      if (bfdesc == outlink)
-        {
-          sq_remfirst(&priv->tx.act);
+      if (sq_empty(&priv->tx.act)) {
+        /* Continue from the next prepared descriptor without resetting
+         * the I2S channel or FIFO.  This mirrors ESP-IDF's continuous
+         * circular-DMA behavior while retaining NuttX buffer ownership.
+         */
 
-          /* Report the result of the transfer */
+        i2s_txdma_continue(priv);
+      }
+    }
 
-          bfcontainer->result = OK;
+    /* If the worker has completed running, then reschedule the working
+     * thread.
+     */
 
-          /* Add the completed buffer container to the tail of the tx.done
-           * queue
-           */
-
-          sq_addlast((sq_entry_t *)bfcontainer, &priv->tx.done);
-
-          /* Check if the DMA is IDLE */
-
-          if (sq_empty(&priv->tx.act))
-            {
-              /* Then start the next DMA. */
-
-              i2s_txdma_start(priv);
-            }
-        }
-
-      /* If the worker has completed running, then reschedule the working
+    if (work_available(&priv->tx.work)) {
+      /* Schedule the TX DMA done processing to occur on the worker
        * thread.
        */
 
-      if (work_available(&priv->tx.work))
-        {
-          /* Schedule the TX DMA done processing to occur on the worker
-           * thread.
-           */
-
-          ret = work_queue(HPWORK, &priv->tx.work, i2s_tx_worker, priv, 0);
-          if (ret != 0)
-            {
-              i2serr("ERROR: Failed to queue TX work: %d\n", ret);
-            }
-        }
+      ret = work_queue(HPWORK, &priv->tx.work, i2s_tx_worker, priv, 0);
+      if (ret != 0) {
+        i2serr("ERROR: Failed to queue TX work: %d\n", ret);
+      }
     }
+  }
 }
 
 /****************************************************************************
@@ -1267,9 +1324,7 @@ static void IRAM_ATTR i2s_tx_schedule(struct esp_i2s_s *priv,
  *
  ****************************************************************************/
 
-static void i2s_rx_schedule(struct esp_i2s_s *priv,
-                            lldesc_t *inlink)
-{
+static void i2s_rx_schedule(struct esp_i2s_s *priv, lldesc_t *inlink) {
   struct esp_buffer_s *bfcontainer;
   lldesc_t *bfdesc;
   int ret;
@@ -1280,62 +1335,58 @@ static void i2s_rx_schedule(struct esp_i2s_s *priv,
 
   /* Move all entries from the rx.act queue to the rx.done queue */
 
-  if (!sq_empty(&priv->rx.act))
-    {
-      /* Remove the next buffer container from the rx.act list */
+  if (!sq_empty(&priv->rx.act)) {
+    /* Remove the next buffer container from the rx.act list */
 
-      bfcontainer = (struct esp_buffer_s *)sq_peek(&priv->rx.act);
+    bfcontainer = (struct esp_buffer_s *)sq_peek(&priv->rx.act);
 
-      /* Find the last descriptor of the current buffer container */
+    /* Find the last descriptor of the current buffer container */
 
-      bfdesc = bfcontainer->dma_link[0];
+    bfdesc = bfcontainer->dma_link[0];
 
-      while (bfdesc->eof == 1 && STAILQ_NEXT(bfdesc, qe) != NULL)
-        {
-          bfdesc = STAILQ_NEXT(bfdesc, qe);
-        }
+    while (bfdesc->eof == 1 && STAILQ_NEXT(bfdesc, qe) != NULL) {
+      bfdesc = STAILQ_NEXT(bfdesc, qe);
+    }
 
-      if (bfdesc == inlink)
-        {
-          sq_remfirst(&priv->rx.act);
+    if (bfdesc == inlink) {
+      sq_remfirst(&priv->rx.act);
 
-          /* Report the result of the transfer */
+      /* Report the result of the transfer */
 
-          bfcontainer->result = OK;
+      bfcontainer->result = OK;
 
-          /* Add the completed buffer container to the tail of the rx.done
-           * queue
-           */
+      /* Add the completed buffer container to the tail of the rx.done
+       * queue
+       */
 
-          sq_addlast((sq_entry_t *)bfcontainer, &priv->rx.done);
+      sq_addlast((sq_entry_t *)bfcontainer, &priv->rx.done);
 
-          /* Check if the DMA is IDLE */
+      /* Check if the DMA is IDLE */
 
-          if (sq_empty(&priv->rx.act))
-            {
-              /* Then start the next DMA. */
+      if (sq_empty(&priv->rx.act)) {
+        /* Continue from the next prepared descriptor without resetting
+         * the running RX channel or FIFO.
+         */
 
-              i2s_rxdma_start(priv);
-            }
-        }
+        i2s_rxdma_continue(priv);
+      }
+    }
 
-      /* If the worker has completed running, then reschedule the working
+    /* If the worker has completed running, then reschedule the working
+     * thread.
+     */
+
+    if (work_available(&priv->rx.work)) {
+      /* Schedule the RX DMA done processing to occur on the worker
        * thread.
        */
 
-      if (work_available(&priv->rx.work))
-        {
-          /* Schedule the RX DMA done processing to occur on the worker
-           * thread.
-           */
-
-          ret = work_queue(HPWORK, &priv->rx.work, i2s_rx_worker, priv, 0);
-          if (ret != 0)
-            {
-              i2serr("ERROR: Failed to queue RX work: %d\n", ret);
-            }
-        }
+      ret = work_queue(HPWORK, &priv->rx.work, i2s_rx_worker, priv, 0);
+      if (ret != 0) {
+        i2serr("ERROR: Failed to queue RX work: %d\n", ret);
+      }
     }
+  }
 }
 
 /****************************************************************************
@@ -1352,8 +1403,7 @@ static void i2s_rx_schedule(struct esp_i2s_s *priv,
  *
  ****************************************************************************/
 
-static void i2s_tx_worker(void *arg)
-{
+static void i2s_tx_worker(void *arg) {
   struct esp_i2s_s *priv = (struct esp_i2s_s *)arg;
   struct esp_buffer_s *bfcontainer;
   irqstate_t flags;
@@ -1370,36 +1420,42 @@ static void i2s_tx_worker(void *arg)
    *
    */
 
-  i2sinfo("tx.act.head=%p tx.done.head=%p\n",
-          priv->tx.act.head, priv->tx.done.head);
+  i2sinfo("tx.act.head=%p tx.done.head=%p\n", priv->tx.act.head,
+          priv->tx.done.head);
 
   /* Process each buffer in the tx.done queue */
 
-  while (sq_peek(&priv->tx.done) != NULL)
-    {
-      /* Remove the buffer container from the tx.done queue.  NOTE that
-       * interrupts must be disabled to do this because the tx.done queue is
-       * also modified from the interrupt level.
-       */
+  while (sq_peek(&priv->tx.done) != NULL) {
+    /* Remove the buffer container from the tx.done queue.  NOTE that
+     * interrupts must be disabled to do this because the tx.done queue is
+     * also modified from the interrupt level.
+     */
 
-      flags = spin_lock_irqsave(&priv->slock);
-      bfcontainer = (struct esp_buffer_s *)sq_remfirst(&priv->tx.done);
-      spin_unlock_irqrestore(&priv->slock, flags);
+    flags = spin_lock_irqsave(&priv->slock);
+    bfcontainer = (struct esp_buffer_s *)sq_remfirst(&priv->tx.done);
+    spin_unlock_irqrestore(&priv->slock, flags);
 
-      /* Perform the TX transfer done callback */
+    /* Perform the TX transfer done callback */
 
-      DEBUGASSERT(bfcontainer && bfcontainer->callback);
-      bfcontainer->callback(&priv->dev, bfcontainer->apb,
-                            bfcontainer->arg, bfcontainer->result);
+    DEBUGASSERT(bfcontainer && bfcontainer->callback);
+    bfcontainer->callback(&priv->dev, bfcontainer->apb, bfcontainer->arg,
+                          bfcontainer->result);
 
-      /* Release the internal buffer used by the DMA outlink */
+    /* Match the reference acquired by i2s_send().  Without this release,
+     * every completed transfer leaks one APB reference and the upper half
+     * cannot dispose of its buffers cleanly when the endpoint is closed.
+     */
 
-      kmm_free(bfcontainer->buf);
+    apb_free(bfcontainer->apb);
 
-      /* And release the buffer container */
+    /* Release the internal buffer used by the DMA outlink */
 
-      VERIFY(i2s_buf_free(priv, bfcontainer));
-    }
+    kmm_free(bfcontainer->buf);
+
+    /* And release the buffer container */
+
+    VERIFY(i2s_buf_free(priv, bfcontainer));
+  }
 
   /* TX channel can only be stopped here if either 1) the RX channel is
    * disabled or 2) the I2S is in slave role. If the I2S is in master role,
@@ -1408,21 +1464,19 @@ static void i2s_tx_worker(void *arg)
    */
 
   if ((!priv->config->rx_en || priv->config->role == I2S_ROLE_SLAVE) &&
-      (sq_empty(&priv->tx.act) && sq_empty(&priv->tx.pend)))
-    {
-      i2s_tx_channel_stop(priv);
+      (sq_empty(&priv->tx.act) && sq_empty(&priv->tx.pend))) {
+    i2s_tx_channel_stop(priv);
 
-      /* If the I2S is in slave role and RX is enabled, the TX's WS and
-       * BCLK are shared with the RX. Then, the RX channel can only be
-       * stopped after the TX channel has finished.
-       */
+    /* If the I2S is in slave role and RX is enabled, the TX's WS and
+     * BCLK are shared with the RX. Then, the RX channel can only be
+     * stopped after the TX channel has finished.
+     */
 
-      if ((priv->config->rx_en) &&
-          (sq_empty(&priv->rx.act) && sq_empty(&priv->rx.pend)))
-        {
-          i2s_rx_channel_stop(priv);
-        }
+    if ((priv->config->rx_en) &&
+        (sq_empty(&priv->rx.act) && sq_empty(&priv->rx.pend))) {
+      i2s_rx_channel_stop(priv);
     }
+  }
 }
 
 /****************************************************************************
@@ -1439,8 +1493,7 @@ static void i2s_tx_worker(void *arg)
  *
  ****************************************************************************/
 
-static void i2s_rx_worker(void *arg)
-{
+static void i2s_rx_worker(void *arg) {
   struct esp_i2s_s *priv = (struct esp_i2s_s *)arg;
   struct esp_buffer_s *bfcontainer;
   lldesc_t *dmadesc;
@@ -1458,56 +1511,64 @@ static void i2s_rx_worker(void *arg)
    *
    */
 
-  i2sinfo("rx.act.head=%p rx.done.head=%p\n",
-          priv->rx.act.head, priv->rx.done.head);
+  i2sinfo("rx.act.head=%p rx.done.head=%p\n", priv->rx.act.head,
+          priv->rx.done.head);
 
   /* Process each buffer in the rx.done queue */
 
-  while (sq_peek(&priv->rx.done) != NULL)
-    {
-      /* Remove the buffer container from the rx.done queue.  NOTE that
-       * interrupts must be disabled to do this because the rx.done queue is
-       * also modified from the interrupt level.
-       */
+  while (sq_peek(&priv->rx.done) != NULL) {
+    /* Remove the buffer container from the rx.done queue.  NOTE that
+     * interrupts must be disabled to do this because the rx.done queue is
+     * also modified from the interrupt level.
+     */
 
-      flags = spin_lock_irqsave(&priv->slock);
-      bfcontainer = (struct esp_buffer_s *)sq_remfirst(&priv->rx.done);
-      spin_unlock_irqrestore(&priv->slock, flags);
+    flags = spin_lock_irqsave(&priv->slock);
+    bfcontainer = (struct esp_buffer_s *)sq_remfirst(&priv->rx.done);
+    spin_unlock_irqrestore(&priv->slock, flags);
 
-      bfcontainer->apb->nbytes = 0;
+    bfcontainer->apb->nbytes = 0;
 
-      dmadesc = bfcontainer->dma_link[0];
+    dmadesc = bfcontainer->dma_link[0];
 
-      do
-        {
-          memcpy(bfcontainer->apb->samp + bfcontainer->apb->nbytes,
-                 (const void *)dmadesc->buf,
-                 dmadesc->length);
-          bfcontainer->apb->nbytes += dmadesc->length;
-          dmadesc = STAILQ_NEXT(dmadesc, qe);
-        }
-      while (dmadesc != NULL && dmadesc->eof == 1);
+    do {
+      size_t remaining = bfcontainer->nbytes - bfcontainer->apb->nbytes;
 
-      /* Perform the RX transfer done callback */
+      if (dmadesc->length > dmadesc->size || dmadesc->length > remaining) {
+        xiaozhi_aerr("invalid RX DMA length=%u size=%u remaining=%zu\n",
+                     dmadesc->length, dmadesc->size, remaining);
+        bfcontainer->result = -EIO;
+        break;
+      }
 
-      DEBUGASSERT(bfcontainer && bfcontainer->callback);
+      memcpy(bfcontainer->apb->samp + bfcontainer->apb->nbytes,
+             (const void *)dmadesc->buf, dmadesc->length);
+      bfcontainer->apb->nbytes += dmadesc->length;
+      dmadesc = STAILQ_NEXT(dmadesc, qe);
+    } while (dmadesc != NULL && dmadesc->eof == 1);
 
-      if (priv->streaming == false)
-        {
-          bfcontainer->apb->flags |= AUDIO_APB_FINAL;
-        }
+    /* Perform the RX transfer done callback */
 
-      bfcontainer->callback(&priv->dev, bfcontainer->apb,
-                            bfcontainer->arg, bfcontainer->result);
+    DEBUGASSERT(bfcontainer && bfcontainer->callback);
 
-      /* Release the internal buffer used by the DMA inlink */
-
-      kmm_free(bfcontainer->buf);
-
-      /* And release the buffer container */
-
-      VERIFY(i2s_buf_free(priv, bfcontainer));
+    if (priv->streaming == false) {
+      bfcontainer->apb->flags |= AUDIO_APB_FINAL;
     }
+
+    bfcontainer->callback(&priv->dev, bfcontainer->apb, bfcontainer->arg,
+                          bfcontainer->result);
+
+    /* Match the reference acquired by i2s_receive(). */
+
+    apb_free(bfcontainer->apb);
+
+    /* Release the internal buffer used by the DMA inlink */
+
+    kmm_free(bfcontainer->buf);
+
+    /* And release the buffer container */
+
+    VERIFY(i2s_buf_free(priv, bfcontainer));
+  }
 
   /* RX channel can only be stopped here if either 1) the TX channel is
    * disabled or 2) the I2S is in master role. If the I2S is in slave role,
@@ -1516,21 +1577,19 @@ static void i2s_rx_worker(void *arg)
    */
 
   if ((!priv->config->tx_en || priv->config->role == I2S_ROLE_MASTER) &&
-      (sq_empty(&priv->rx.act) && sq_empty(&priv->rx.pend)))
-    {
-      i2s_rx_channel_stop(priv);
+      (sq_empty(&priv->rx.act) && sq_empty(&priv->rx.pend))) {
+    i2s_rx_channel_stop(priv);
 
-      /* If the I2S is in master role and TX is enabled, the RX's WS and
-       * BCLK are shared with the TX. Then, the TX channel can only be
-       * stopped after the RX channel has finished.
-       */
+    /* If the I2S is in master role and TX is enabled, the RX's WS and
+     * BCLK are shared with the TX. Then, the TX channel can only be
+     * stopped after the RX channel has finished.
+     */
 
-      if ((priv->config->tx_en) &&
-          (sq_empty(&priv->tx.act) && sq_empty(&priv->tx.pend)))
-        {
-          i2s_tx_channel_stop(priv);
-        }
+    if ((priv->config->tx_en) &&
+        (sq_empty(&priv->tx.act) && sq_empty(&priv->tx.pend))) {
+      i2s_tx_channel_stop(priv);
     }
+  }
 }
 
 /****************************************************************************
@@ -1548,170 +1607,144 @@ static void i2s_rx_worker(void *arg)
  *
  ****************************************************************************/
 
-static int i2s_configure(struct esp_i2s_s *priv)
-{
-  uint32_t tx_conf  = 0;
-  uint32_t rx_conf  = 0;
+static int i2s_configure(struct esp_i2s_s *priv) {
+  uint32_t tx_conf = 0;
+  uint32_t rx_conf = 0;
   uint32_t port;
   int ret;
-  i2s_hal_slot_config_t tx_slot_cfg =
-    {
-      0
-    };
+  i2s_hal_slot_config_t tx_slot_cfg = {0};
 
-  i2s_hal_slot_config_t rx_slot_cfg =
-    {
-      0
-    };
+  i2s_hal_slot_config_t rx_slot_cfg = {0};
 
   port = priv->config->port;
 
   i2s_hal_init(priv->config->ctx, port);
-  PERIPH_RCC_ATOMIC()
-    {
-      i2s_ll_enable_bus_clock(port, true);
-      i2s_ll_reset_register(port);
-      i2s_ll_enable_core_clock(I2S_LL_GET_HW(port), true);
-    }
+  PERIPH_RCC_ATOMIC() {
+    i2s_ll_enable_bus_clock(port, true);
+    i2s_ll_reset_register(port);
+    i2s_ll_enable_core_clock(I2S_LL_GET_HW(port), true);
+  }
 
   /* Configure multiplexed pins as connected on the board */
 
   /* Enable TX channel */
 
-  if (priv->config->dout_pin != I2S_GPIO_UNUSED)
-    {
-      /* If TX channel is used, enable the clock source */
+  if (priv->config->dout_pin != I2S_GPIO_UNUSED) {
+    /* If TX channel is used, enable the clock source */
 
-      esp_gpiowrite(priv->config->dout_pin, 1);
-      esp_gpiowrite(priv->config->dout_pin, 0);
-      esp_gpiowrite(priv->config->dout_pin, 1);
-      esp_configgpio(priv->config->dout_pin, OUTPUT_FUNCTION_2);
-      esp_gpio_matrix_out(priv->config->dout_pin,
-                          i2s_periph_signal[port].data_out_sigs[0], 0, 0);
-    }
+    esp_gpiowrite(priv->config->dout_pin, 1);
+    esp_gpiowrite(priv->config->dout_pin, 0);
+    esp_gpiowrite(priv->config->dout_pin, 1);
+    esp_configgpio(priv->config->dout_pin, OUTPUT_FUNCTION_2);
+    esp_gpio_matrix_out(priv->config->dout_pin,
+                        i2s_periph_signal[port].data_out_sigs[0], 0, 0);
+  }
 
   /* Enable RX channel */
 
-  if (priv->config->din_pin != I2S_GPIO_UNUSED)
-    {
-      /* If RX channel is used, enable the clock source */
+  if (priv->config->din_pin != I2S_GPIO_UNUSED) {
+    /* If RX channel is used, enable the clock source */
 
-      /* Check for loopback mode */
+    /* Check for loopback mode */
 
-      if (priv->config->dout_pin != I2S_GPIO_UNUSED &&
-          priv->config->din_pin == priv->config->dout_pin)
-        {
-          esp_configgpio(priv->config->din_pin,
-                         INPUT_FUNCTION_2 | OUTPUT_FUNCTION_2);
-          esp_gpio_matrix_in(priv->config->din_pin,
-                             i2s_periph_signal[port].data_in_sig, 0);
-          esp_gpio_matrix_out(priv->config->din_pin,
-                              i2s_periph_signal[port].data_out_sigs[0],
-                              0, 0);
-        }
-      else
-        {
-          esp_configgpio(priv->config->din_pin, INPUT_FUNCTION_2);
-          esp_gpio_matrix_in(priv->config->din_pin,
-                             i2s_periph_signal[port].data_in_sig, 0);
-        }
+    if (priv->config->dout_pin != I2S_GPIO_UNUSED &&
+        priv->config->din_pin == priv->config->dout_pin) {
+      esp_configgpio(priv->config->din_pin,
+                     INPUT_FUNCTION_2 | OUTPUT_FUNCTION_2);
+      esp_gpio_matrix_in(priv->config->din_pin,
+                         i2s_periph_signal[port].data_in_sig, 0);
+      esp_gpio_matrix_out(priv->config->din_pin,
+                          i2s_periph_signal[port].data_out_sigs[0], 0, 0);
+    } else {
+      esp_configgpio(priv->config->din_pin, INPUT_FUNCTION_2);
+      esp_gpio_matrix_in(priv->config->din_pin,
+                         i2s_periph_signal[port].data_in_sig, 0);
     }
+  }
 
-  if (priv->config->role == I2S_ROLE_SLAVE)
-    {
-      /* For "tx + slave" mode, select TX signal index for ws and bck */
+  if (priv->config->role == I2S_ROLE_SLAVE) {
+    /* For "tx + slave" mode, select TX signal index for ws and bck */
 
-      if (priv->config->tx_en && !priv->config->rx_en)
-        {
+    if (priv->config->tx_en && !priv->config->rx_en) {
 #if SOC_I2S_HW_VERSION_2
-          PERIPH_RCC_ATOMIC()
-            {
-              i2s_ll_mclk_bind_to_tx_clk(priv->config->ctx->dev);
-            }
+      PERIPH_RCC_ATOMIC() {
+        i2s_ll_mclk_bind_to_tx_clk(priv->config->ctx->dev);
+      }
 #endif
 
-          esp_gpiowrite(priv->config->ws_pin, 1);
-          esp_configgpio(priv->config->ws_pin, INPUT_FUNCTION_2);
-          esp_gpio_matrix_in(priv->config->ws_pin,
-                             i2s_periph_signal[port].s_tx_ws_sig, 0);
+      esp_gpiowrite(priv->config->ws_pin, 1);
+      esp_configgpio(priv->config->ws_pin, INPUT_FUNCTION_2);
+      esp_gpio_matrix_in(priv->config->ws_pin,
+                         i2s_periph_signal[port].s_tx_ws_sig, 0);
 
-          esp_gpiowrite(priv->config->bclk_pin, 1);
-          esp_configgpio(priv->config->bclk_pin, INPUT_FUNCTION_2);
-          esp_gpio_matrix_in(priv->config->bclk_pin,
-                             i2s_periph_signal[port].s_tx_bck_sig, 0);
-        }
-      else
-        {
-          /* For "tx + rx + slave" or "rx + slave" mode, select RX signal
-           * index for ws and bck.
-           */
+      esp_gpiowrite(priv->config->bclk_pin, 1);
+      esp_configgpio(priv->config->bclk_pin, INPUT_FUNCTION_2);
+      esp_gpio_matrix_in(priv->config->bclk_pin,
+                         i2s_periph_signal[port].s_tx_bck_sig, 0);
+    } else {
+      /* For "tx + rx + slave" or "rx + slave" mode, select RX signal
+       * index for ws and bck.
+       */
 
-          esp_gpiowrite(priv->config->ws_pin, 1);
-          esp_configgpio(priv->config->ws_pin, INPUT_FUNCTION_2);
-          esp_gpio_matrix_in(priv->config->ws_pin,
-                             i2s_periph_signal[port].s_rx_ws_sig, 0);
+      esp_gpiowrite(priv->config->ws_pin, 1);
+      esp_configgpio(priv->config->ws_pin, INPUT_FUNCTION_2);
+      esp_gpio_matrix_in(priv->config->ws_pin,
+                         i2s_periph_signal[port].s_rx_ws_sig, 0);
 
-          esp_gpiowrite(priv->config->bclk_pin, 1);
-          esp_configgpio(priv->config->bclk_pin, INPUT_FUNCTION_2);
-          esp_gpio_matrix_in(priv->config->bclk_pin,
-                             i2s_periph_signal[port].s_rx_bck_sig, 0);
-        }
+      esp_gpiowrite(priv->config->bclk_pin, 1);
+      esp_configgpio(priv->config->bclk_pin, INPUT_FUNCTION_2);
+      esp_gpio_matrix_in(priv->config->bclk_pin,
+                         i2s_periph_signal[port].s_rx_bck_sig, 0);
     }
-  else
-    {
-      /* Considering master role for the I2S port */
+  } else {
+    /* Considering master role for the I2S port */
 
-      /* Set MCLK pin */
+    /* Set MCLK pin */
 
-      if (priv->config->mclk_pin != I2S_GPIO_UNUSED)
-        {
-          i2sinfo("Configuring GPIO%" PRIu8 " to output master clock\n",
-                  priv->config->mclk_pin);
+    if (priv->config->mclk_pin != I2S_GPIO_UNUSED) {
+      i2sinfo("Configuring GPIO%" PRIu8 " to output master clock\n",
+              priv->config->mclk_pin);
 
-          esp_gpiowrite(priv->config->mclk_pin, 1);
-          esp_configgpio(priv->config->mclk_pin, OUTPUT_FUNCTION_2);
-          esp_gpio_matrix_out(priv->config->mclk_pin,
-                              i2s_periph_signal[port].mck_out_sig, 0, 0);
-        }
+      esp_gpiowrite(priv->config->mclk_pin, 1);
+      esp_configgpio(priv->config->mclk_pin, OUTPUT_FUNCTION_2);
+      esp_gpio_matrix_out(priv->config->mclk_pin,
+                          i2s_periph_signal[port].mck_out_sig, 0, 0);
+    }
 
-      if (priv->config->rx_en && !priv->config->tx_en)
-        {
-          /* For "rx + master" mode, select RX signal index for ws and bck */
+    if (priv->config->rx_en && !priv->config->tx_en) {
+      /* For "rx + master" mode, select RX signal index for ws and bck */
 
 #if SOC_I2S_HW_VERSION_2
-          PERIPH_RCC_ATOMIC()
-            {
-              i2s_ll_mclk_bind_to_rx_clk(priv->config->ctx->dev);
-            }
+      PERIPH_RCC_ATOMIC() {
+        i2s_ll_mclk_bind_to_rx_clk(priv->config->ctx->dev);
+      }
 #endif
 
-          esp_gpiowrite(priv->config->ws_pin, 1);
-          esp_configgpio(priv->config->ws_pin, OUTPUT_FUNCTION_2);
-          esp_gpio_matrix_out(priv->config->ws_pin,
-                              i2s_periph_signal[port].m_rx_ws_sig, 0, 0);
+      esp_gpiowrite(priv->config->ws_pin, 1);
+      esp_configgpio(priv->config->ws_pin, OUTPUT_FUNCTION_2);
+      esp_gpio_matrix_out(priv->config->ws_pin,
+                          i2s_periph_signal[port].m_rx_ws_sig, 0, 0);
 
-          esp_gpiowrite(priv->config->bclk_pin, 1);
-          esp_configgpio(priv->config->bclk_pin, OUTPUT_FUNCTION_2);
-          esp_gpio_matrix_out(priv->config->bclk_pin,
-                              i2s_periph_signal[port].m_rx_bck_sig, 0, 0);
-        }
-      else
-        {
-          /* For "tx + rx + master" or "tx + master" mode, select TX signal
-           * index for ws and bck.
-           */
+      esp_gpiowrite(priv->config->bclk_pin, 1);
+      esp_configgpio(priv->config->bclk_pin, OUTPUT_FUNCTION_2);
+      esp_gpio_matrix_out(priv->config->bclk_pin,
+                          i2s_periph_signal[port].m_rx_bck_sig, 0, 0);
+    } else {
+      /* For "tx + rx + master" or "tx + master" mode, select TX signal
+       * index for ws and bck.
+       */
 
-          esp_gpiowrite(priv->config->ws_pin, 1);
-          esp_configgpio(priv->config->ws_pin, OUTPUT_FUNCTION_2);
-          esp_gpio_matrix_out(priv->config->ws_pin,
-                              i2s_periph_signal[port].m_tx_ws_sig, 0, 0);
+      esp_gpiowrite(priv->config->ws_pin, 1);
+      esp_configgpio(priv->config->ws_pin, OUTPUT_FUNCTION_2);
+      esp_gpio_matrix_out(priv->config->ws_pin,
+                          i2s_periph_signal[port].m_tx_ws_sig, 0, 0);
 
-          esp_gpiowrite(priv->config->bclk_pin, 1);
-          esp_configgpio(priv->config->bclk_pin, OUTPUT_FUNCTION_2);
-          esp_gpio_matrix_out(priv->config->bclk_pin,
-                              i2s_periph_signal[port].m_tx_bck_sig, 0, 0);
-        }
+      esp_gpiowrite(priv->config->bclk_pin, 1);
+      esp_configgpio(priv->config->bclk_pin, OUTPUT_FUNCTION_2);
+      esp_gpio_matrix_out(priv->config->bclk_pin,
+                          i2s_periph_signal[port].m_tx_bck_sig, 0, 0);
     }
+  }
 
   /* Share BCLK and WS if in full-duplex mode */
 
@@ -1723,182 +1756,140 @@ static int i2s_configure(struct esp_i2s_s *priv)
 
   /* Configure the TX module */
 
-  if (priv->config->tx_en)
-    {
-      if (priv->channels == 1)
-        {
-          tx_slot_cfg.slot_mode = I2S_SLOT_MODE_MONO;
-        }
-      else
-        {
-          tx_slot_cfg.slot_mode = I2S_SLOT_MODE_STEREO;
-        }
-
-      tx_slot_cfg.data_bit_width = priv->config->data_width;
-      tx_slot_cfg.slot_bit_width = I2S_SLOT_BIT_WIDTH_AUTO;
-
-      if (priv->config->audio_std_mode <= I2S_TDM_PCM)
-        {
-          if (priv->config->audio_std_mode == I2S_TDM_PHILIPS)
-            {
-              I2S_TDM_PHILIPS_SLOT_DEFAULT_CONFIG(tx_slot_cfg.tdm,
-                                                  priv->data_width,
-                                                  I2S_TDM_AUTO_SLOT);
-            }
-          else if (priv->config->audio_std_mode == I2S_TDM_MSB)
-            {
-              I2S_TDM_MSB_SLOT_DEFAULT_CONFIG(tx_slot_cfg.tdm,
-                                              priv->data_width,
-                                              I2S_TDM_AUTO_SLOT);
-            }
-          else
-            {
-              I2S_TDM_PCM_SHORT_SLOT_DEFAULT_CONFIG(tx_slot_cfg.tdm,
-                                                    priv->data_width,
-                                                    I2S_TDM_AUTO_SLOT);
-            }
-
-          i2s_hal_tdm_set_tx_slot(priv->config->ctx,
-                                  priv->config->role == I2S_ROLE_SLAVE,
-                                  &tx_slot_cfg);
-
-          i2s_ll_tx_enable_tdm(priv->config->ctx->dev);
-        }
-      else
-        {
-          i2s_ll_tx_enable_pdm(priv->config->ctx->dev, true);
-          I2S_PDM_TX_SLOT_DEFAULT_CONFIG(tx_slot_cfg.pdm_tx);
-          i2s_hal_pdm_set_tx_slot(priv->config->ctx,
-                                  priv->config->role == I2S_ROLE_SLAVE,
-                                  &tx_slot_cfg);
-        }
-
-      /* The default value for the master clock frequency (MCLK frequency)
-       * can be set from the sample rate multiplied by a fixed value, known
-       * as MCLK multiplier. This multiplier, however, should be divisible
-       * by the number of bytes from a sample, i.e, for 24 bits, the
-       * multiplier should be divisible by 3. NOTE: the MCLK frequency can
-       * be adjusted on runtime, so this value remains valid only if the
-       * upper half does not implement the `i2s_setmclkfrequency` method.
-       */
-
-      if (priv->config->data_width == I2S_DATA_BIT_WIDTH_24BIT)
-        {
-          priv->mclk_multiple = I2S_MCLK_MULTIPLE_384;
-        }
-      else
-        {
-          priv->mclk_multiple = I2S_MCLK_MULTIPLE_256;
-        }
-
-      ret = i2s_setmclkfrequency((struct i2s_dev_s *)priv,
-                                 (priv->config->rate * priv->mclk_multiple));
-      if (ret <= 0)
-        {
-          i2serr("Failed to set MCLK frequency: %d\n", ret);
-          return ret;
-        }
-
-      priv->rate = priv->config->rate;
-      ret = i2s_set_clock(priv);
-      if (ret != OK)
-        {
-          i2serr("Failed to set clock: %d\n", ret);
-          return ret;
-        }
+  if (priv->config->tx_en) {
+    if (priv->channels == 1) {
+      tx_slot_cfg.slot_mode = I2S_SLOT_MODE_MONO;
+    } else {
+      tx_slot_cfg.slot_mode = I2S_SLOT_MODE_STEREO;
     }
+
+    tx_slot_cfg.data_bit_width = priv->config->data_width;
+    tx_slot_cfg.slot_bit_width = I2S_SLOT_BIT_WIDTH_AUTO;
+
+    if (priv->config->audio_std_mode <= I2S_TDM_PCM) {
+      if (priv->config->audio_std_mode == I2S_TDM_PHILIPS) {
+        I2S_TDM_PHILIPS_SLOT_DEFAULT_CONFIG(tx_slot_cfg.tdm, priv->data_width,
+                                            I2S_TDM_AUTO_SLOT);
+      } else if (priv->config->audio_std_mode == I2S_TDM_MSB) {
+        I2S_TDM_MSB_SLOT_DEFAULT_CONFIG(tx_slot_cfg.tdm, priv->data_width,
+                                        I2S_TDM_AUTO_SLOT);
+      } else {
+        I2S_TDM_PCM_SHORT_SLOT_DEFAULT_CONFIG(tx_slot_cfg.tdm, priv->data_width,
+                                              I2S_TDM_AUTO_SLOT);
+      }
+
+      i2s_hal_tdm_set_tx_slot(priv->config->ctx,
+                              priv->config->role == I2S_ROLE_SLAVE,
+                              &tx_slot_cfg);
+
+      i2s_ll_tx_enable_tdm(priv->config->ctx->dev);
+    } else {
+      i2s_ll_tx_enable_pdm(priv->config->ctx->dev, true);
+      I2S_PDM_TX_SLOT_DEFAULT_CONFIG(tx_slot_cfg.pdm_tx);
+      i2s_hal_pdm_set_tx_slot(priv->config->ctx,
+                              priv->config->role == I2S_ROLE_SLAVE,
+                              &tx_slot_cfg);
+    }
+
+    /* The default value for the master clock frequency (MCLK frequency)
+     * can be set from the sample rate multiplied by a fixed value, known
+     * as MCLK multiplier. This multiplier, however, should be divisible
+     * by the number of bytes from a sample, i.e, for 24 bits, the
+     * multiplier should be divisible by 3. NOTE: the MCLK frequency can
+     * be adjusted on runtime, so this value remains valid only if the
+     * upper half does not implement the `i2s_setmclkfrequency` method.
+     */
+
+    if (priv->config->data_width == I2S_DATA_BIT_WIDTH_24BIT) {
+      priv->mclk_multiple = I2S_MCLK_MULTIPLE_384;
+    } else {
+      priv->mclk_multiple = I2S_MCLK_MULTIPLE_256;
+    }
+
+    ret = i2s_setmclkfrequency((struct i2s_dev_s *)priv,
+                               (priv->config->rate * priv->mclk_multiple));
+    if (ret <= 0) {
+      i2serr("Failed to set MCLK frequency: %d\n", ret);
+      return ret;
+    }
+
+    priv->rate = priv->config->rate;
+    ret = i2s_set_clock(priv);
+    if (ret != OK) {
+      i2serr("Failed to set clock: %d\n", ret);
+      return ret;
+    }
+  }
 
   /* Configure the RX module */
 
-  if (priv->config->rx_en)
-    {
-      if (priv->channels == 1)
-        {
-          rx_slot_cfg.slot_mode = I2S_SLOT_MODE_MONO;
-        }
-      else
-        {
-          rx_slot_cfg.slot_mode = I2S_SLOT_MODE_STEREO;
-        }
+  if (priv->config->rx_en) {
+    if (priv->channels == 1) {
+      rx_slot_cfg.slot_mode = I2S_SLOT_MODE_MONO;
+    } else {
+      rx_slot_cfg.slot_mode = I2S_SLOT_MODE_STEREO;
+    }
 
-      rx_slot_cfg.data_bit_width = priv->config->data_width;
-      rx_slot_cfg.slot_bit_width = I2S_SLOT_BIT_WIDTH_AUTO;
+    rx_slot_cfg.data_bit_width = priv->config->data_width;
+    rx_slot_cfg.slot_bit_width = I2S_SLOT_BIT_WIDTH_AUTO;
 
-      if (priv->config->audio_std_mode <= I2S_TDM_PCM)
-        {
-          /* If the role is slave or master and tx is enabled, then the role
-           * is slave
-           */
-
-          bool is_slave = priv->config->role == I2S_ROLE_SLAVE || \
-                          (priv->config->role == I2S_ROLE_MASTER && \
-                           priv->config->tx_en);
-
-          if (priv->config->audio_std_mode == I2S_TDM_PHILIPS)
-            {
-              I2S_TDM_PHILIPS_SLOT_DEFAULT_CONFIG(rx_slot_cfg.tdm,
-                                                  priv->data_width,
-                                                  I2S_TDM_AUTO_SLOT);
-            }
-          else if (priv->config->audio_std_mode == I2S_TDM_MSB)
-            {
-              I2S_TDM_MSB_SLOT_DEFAULT_CONFIG(rx_slot_cfg.tdm,
-                                              priv->data_width,
-                                              I2S_TDM_AUTO_SLOT);
-            }
-          else
-            {
-              I2S_TDM_PCM_SHORT_SLOT_DEFAULT_CONFIG(tx_slot_cfg.tdm,
-                                                    priv->data_width,
-                                                    I2S_TDM_AUTO_SLOT);
-            }
-
-          i2s_hal_tdm_set_rx_slot(priv->config->ctx,
-                                  is_slave,
-                                  &rx_slot_cfg);
-
-          i2s_ll_rx_enable_tdm(priv->config->ctx->dev);
-        }
-      else
-        {
-          i2serr("Due to the lack of `PDM to PCM` module, \
-                  PDM RX is not available\n");
-        }
-
-      /* The default value for the master clock frequency (MCLK frequency)
-       * can be set from the sample rate multiplied by a fixed value, known
-       * as MCLK multiplier. This multiplier, however, should be divisible
-       * by the number of bytes from a sample, i.e, for 24 bits, the
-       * multiplier should be divisible by 3. NOTE: the MCLK frequency can
-       * be adjusted on runtime, so this value remains valid only if the
-       * upper half does not implement the `i2s_setmclkfrequency` method.
+    if (priv->config->audio_std_mode <= I2S_TDM_PCM) {
+      /* If the role is slave or master and tx is enabled, then the role
+       * is slave
        */
 
-      if (priv->config->data_width == I2S_DATA_BIT_WIDTH_24BIT)
-        {
-          priv->mclk_multiple = I2S_MCLK_MULTIPLE_384;
-        }
-      else
-        {
-          priv->mclk_multiple = I2S_MCLK_MULTIPLE_256;
-        }
+      bool is_slave =
+          priv->config->role == I2S_ROLE_SLAVE ||
+          (priv->config->role == I2S_ROLE_MASTER && priv->config->tx_en);
 
-      ret = i2s_setmclkfrequency((struct i2s_dev_s *)priv,
-                                 (priv->config->rate * priv->mclk_multiple));
-      if (ret <= 0)
-        {
-          i2serr("Failed to set MCLK frequency: %d\n", ret);
-          return ret;
-        }
+      if (priv->config->audio_std_mode == I2S_TDM_PHILIPS) {
+        I2S_TDM_PHILIPS_SLOT_DEFAULT_CONFIG(rx_slot_cfg.tdm, priv->data_width,
+                                            I2S_TDM_AUTO_SLOT);
+      } else if (priv->config->audio_std_mode == I2S_TDM_MSB) {
+        I2S_TDM_MSB_SLOT_DEFAULT_CONFIG(rx_slot_cfg.tdm, priv->data_width,
+                                        I2S_TDM_AUTO_SLOT);
+      } else {
+        I2S_TDM_PCM_SHORT_SLOT_DEFAULT_CONFIG(tx_slot_cfg.tdm, priv->data_width,
+                                              I2S_TDM_AUTO_SLOT);
+      }
 
-      priv->rate = priv->config->rate;
-      ret = i2s_set_clock(priv);
-      if (ret != OK)
-        {
-          i2serr("Failed to set clock: %d\n", ret);
-          return ret;
-        }
+      i2s_hal_tdm_set_rx_slot(priv->config->ctx, is_slave, &rx_slot_cfg);
+
+      i2s_ll_rx_enable_tdm(priv->config->ctx->dev);
+    } else {
+      i2serr("Due to the lack of `PDM to PCM` module, \
+                  PDM RX is not available\n");
     }
+
+    /* The default value for the master clock frequency (MCLK frequency)
+     * can be set from the sample rate multiplied by a fixed value, known
+     * as MCLK multiplier. This multiplier, however, should be divisible
+     * by the number of bytes from a sample, i.e, for 24 bits, the
+     * multiplier should be divisible by 3. NOTE: the MCLK frequency can
+     * be adjusted on runtime, so this value remains valid only if the
+     * upper half does not implement the `i2s_setmclkfrequency` method.
+     */
+
+    if (priv->config->data_width == I2S_DATA_BIT_WIDTH_24BIT) {
+      priv->mclk_multiple = I2S_MCLK_MULTIPLE_384;
+    } else {
+      priv->mclk_multiple = I2S_MCLK_MULTIPLE_256;
+    }
+
+    ret = i2s_setmclkfrequency((struct i2s_dev_s *)priv,
+                               (priv->config->rate * priv->mclk_multiple));
+    if (ret <= 0) {
+      i2serr("Failed to set MCLK frequency: %d\n", ret);
+      return ret;
+    }
+
+    priv->rate = priv->config->rate;
+    ret = i2s_set_clock(priv);
+    if (ret != OK) {
+      i2serr("Failed to set clock: %d\n", ret);
+      return ret;
+    }
+  }
 
   return OK;
 }
@@ -1925,8 +1916,7 @@ static int i2s_configure(struct esp_i2s_s *priv)
  ****************************************************************************/
 
 #if SOC_I2S_SUPPORTS_APLL
-static uint32_t i2s_set_get_apll_freq(uint32_t mclk_freq_hz)
-{
+static uint32_t i2s_set_get_apll_freq(uint32_t mclk_freq_hz) {
   int mclk_div = (int)((CLK_LL_APLL_MIN_HZ / mclk_freq_hz) + 1);
   esp_err_t ret = ESP_OK;
   uint32_t expt_freq;
@@ -1942,31 +1932,29 @@ static uint32_t i2s_set_get_apll_freq(uint32_t mclk_freq_hz)
 
   mclk_div = mclk_div < 2 ? 2 : mclk_div;
   expt_freq = mclk_freq_hz * mclk_div;
-  if (expt_freq > CLK_LL_APLL_MAX_HZ)
-    {
-      i2serr("The required APLL frequency exceed its maximum value");
-      goto errout;
-    }
+  if (expt_freq > CLK_LL_APLL_MAX_HZ) {
+    i2serr("The required APLL frequency exceed its maximum value");
+    goto errout;
+  }
 
   real_freq = 0;
   ret = periph_rtc_apll_freq_set(expt_freq, &real_freq);
 
-  if (ret == ESP_ERR_INVALID_ARG)
-    {
-      i2serr("set APLL freq failed due to invalid argument");
-      goto errout;
-    }
+  if (ret == ESP_ERR_INVALID_ARG) {
+    i2serr("set APLL freq failed due to invalid argument");
+    goto errout;
+  }
 
-  if (ret == ESP_ERR_INVALID_STATE)
-    {
-      i2swarn("APLL is occupied already, it is working at %"PRIu32" Hz while"
-              " the expected frequency is %"PRIu32" Hz",
-              real_freq, expt_freq);
-      i2swarn("Trying to work at %"PRIu32" Hz...", real_freq);
-    }
+  if (ret == ESP_ERR_INVALID_STATE) {
+    i2swarn("APLL is occupied already, it is working at %" PRIu32 " Hz while"
+            " the expected frequency is %" PRIu32 " Hz",
+            real_freq, expt_freq);
+    i2swarn("Trying to work at %" PRIu32 " Hz...", real_freq);
+  }
 
-  i2sinfo("APLL expected frequency is %"PRIu32" Hz, real frequency is "
-          "%"PRIu32" Hz", expt_freq, real_freq);
+  i2sinfo("APLL expected frequency is %" PRIu32 " Hz, real frequency is "
+          "%" PRIu32 " Hz",
+          expt_freq, real_freq);
   return real_freq;
 
 errout:
@@ -1995,26 +1983,22 @@ errout:
  ****************************************************************************/
 
 static uint32_t i2s_get_source_clk_freq(i2s_clock_src_t clk_src,
-                                        uint32_t mclk_freq_hz)
-{
+                                        uint32_t mclk_freq_hz) {
   uint32_t clk_freq = 0;
 
 #if SOC_I2S_SUPPORTS_APLL
-  if (clk_src == I2S_CLK_SRC_APLL)
-    {
-      return i2s_set_get_apll_freq(mclk_freq_hz);
-    }
+  if (clk_src == I2S_CLK_SRC_APLL) {
+    return i2s_set_get_apll_freq(mclk_freq_hz);
+  }
 #endif
 
 #ifdef I2S_LL_DEFAULT_CLK_SRC
-  if (clk_src == I2S_CLK_SRC_DEFAULT)
-    {
-      clk_src = I2S_LL_DEFAULT_CLK_SRC;
-    }
+  if (clk_src == I2S_CLK_SRC_DEFAULT) {
+    clk_src = I2S_LL_DEFAULT_CLK_SRC;
+  }
 #endif
 
-  esp_clk_tree_src_get_freq_hz(clk_src,
-                               ESP_CLK_TREE_SRC_FREQ_PRECISION_CACHED,
+  esp_clk_tree_src_get_freq_hz(clk_src, ESP_CLK_TREE_SRC_FREQ_PRECISION_CACHED,
                                &clk_freq);
   return clk_freq;
 }
@@ -2035,8 +2019,7 @@ static uint32_t i2s_get_source_clk_freq(i2s_clock_src_t clk_src,
  *
  ****************************************************************************/
 
-static int32_t i2s_check_mclkfrequency(struct esp_i2s_s *priv)
-{
+static int32_t i2s_check_mclkfrequency(struct esp_i2s_s *priv) {
   uint32_t mclk_freq;
   uint32_t mclk_multiple = priv->mclk_multiple;
   uint32_t bclk = priv->rate * priv->config->total_slot * priv->data_width;
@@ -2047,33 +2030,28 @@ static int32_t i2s_check_mclkfrequency(struct esp_i2s_s *priv)
    * clock frequency.
    */
 
-  if (priv->mclk_freq % priv->rate == 0 && priv->mclk_freq % bclk == 0)
-    {
-      priv->mclk_multiple = priv->mclk_freq / priv->rate;
-      return priv->mclk_freq;
-    }
+  if (priv->mclk_freq % priv->rate == 0 && priv->mclk_freq % bclk == 0) {
+    priv->mclk_multiple = priv->mclk_freq / priv->rate;
+    return priv->mclk_freq;
+  }
 
   /* Select the lowest multiplier for setting the master clock */
 
   for (mclk_multiple = I2S_MCLK_MULTIPLE_128;
        mclk_multiple <= I2S_MCLK_MULTIPLE_512;
-       mclk_multiple += I2S_MCLK_MULTIPLE_128)
-    {
-      mclk_freq = priv->rate * mclk_multiple;
-      if (mclk_freq % priv->rate == 0 && mclk_freq % bclk == 0)
-        {
-          priv->mclk_multiple = mclk_multiple;
-          mclk_freq = i2s_setmclkfrequency((struct i2s_dev_s *)priv,
-                                           mclk_freq);
-          if (mclk_freq <= 0)
-            {
-              i2serr("Failed to set MCLK frequency: %"PRIu32"\n", mclk_freq);
-              return -EINVAL;
-            }
+       mclk_multiple += I2S_MCLK_MULTIPLE_128) {
+    mclk_freq = priv->rate * mclk_multiple;
+    if (mclk_freq % priv->rate == 0 && mclk_freq % bclk == 0) {
+      priv->mclk_multiple = mclk_multiple;
+      mclk_freq = i2s_setmclkfrequency((struct i2s_dev_s *)priv, mclk_freq);
+      if (mclk_freq <= 0) {
+        i2serr("Failed to set MCLK frequency: %" PRIu32 "\n", mclk_freq);
+        return -EINVAL;
+      }
 
-          return mclk_freq;
-        }
+      return mclk_freq;
     }
+  }
 
   return -EINVAL;
 }
@@ -2092,46 +2070,35 @@ static int32_t i2s_check_mclkfrequency(struct esp_i2s_s *priv)
  *
  ****************************************************************************/
 
-static uint32_t i2s_set_datawidth(struct esp_i2s_s *priv)
-{
+static uint32_t i2s_set_datawidth(struct esp_i2s_s *priv) {
   int width;
-  if (priv->config->tx_en)
-    {
-      i2s_ll_tx_set_sample_bit(priv->config->ctx->dev,
-                               priv->data_width, priv->data_width);
-      i2s_ll_tx_set_half_sample_bit(priv->config->ctx->dev,
-                                    priv->data_width);
+  if (priv->config->tx_en) {
+    i2s_ll_tx_set_sample_bit(priv->config->ctx->dev, priv->data_width,
+                             priv->data_width);
+    i2s_ll_tx_set_half_sample_bit(priv->config->ctx->dev, priv->data_width);
 
-      if (priv->config->audio_std_mode != I2S_TDM_PCM)
-        {
-          width = priv->data_width;
-        }
-      else
-        {
-          width = 1;
-        }
-
-      i2s_ll_tx_set_ws_width(priv->config->ctx->dev, width);
+    if (priv->config->audio_std_mode != I2S_TDM_PCM) {
+      width = priv->data_width;
+    } else {
+      width = 1;
     }
 
-  if (priv->config->rx_en)
-    {
-      i2s_ll_rx_set_sample_bit(priv->config->ctx->dev,
-                               priv->data_width, priv->data_width);
-      i2s_ll_rx_set_half_sample_bit(priv->config->ctx->dev,
-                                    priv->data_width);
+    i2s_ll_tx_set_ws_width(priv->config->ctx->dev, width);
+  }
 
-      if (priv->config->audio_std_mode != I2S_TDM_PCM)
-        {
-          width = priv->data_width;
-        }
-      else
-        {
-          width = 1;
-        }
+  if (priv->config->rx_en) {
+    i2s_ll_rx_set_sample_bit(priv->config->ctx->dev, priv->data_width,
+                             priv->data_width);
+    i2s_ll_rx_set_half_sample_bit(priv->config->ctx->dev, priv->data_width);
 
-      i2s_ll_rx_set_ws_width(priv->config->ctx->dev, width);
+    if (priv->config->audio_std_mode != I2S_TDM_PCM) {
+      width = priv->data_width;
+    } else {
+      width = 1;
     }
+
+    i2s_ll_rx_set_ws_width(priv->config->ctx->dev, width);
+  }
 
   return priv->data_width;
 }
@@ -2150,8 +2117,7 @@ static uint32_t i2s_set_datawidth(struct esp_i2s_s *priv)
  *
  ****************************************************************************/
 
-static int i2s_set_clock(struct esp_i2s_s *priv)
-{
+static int i2s_set_clock(struct esp_i2s_s *priv) {
   uint32_t bclk;
   uint32_t mclk;
   uint32_t sclk;
@@ -2160,11 +2126,10 @@ static int i2s_set_clock(struct esp_i2s_s *priv)
 
   sclk = i2s_get_source_clk_freq(priv->config->tx_clk_src, priv->mclk_freq);
 
-  if (sclk <= 0)
-    {
-      i2serr("Invalid source clock frequency: %"PRIu32"\n", sclk);
-      return -EINVAL;
-    }
+  if (sclk <= 0) {
+    i2serr("Invalid source clock frequency: %" PRIu32 "\n", sclk);
+    return -EINVAL;
+  }
 
   /* fmclk = bck_div * fbclk = fsclk / (mclk_div + b / a)
    * mclk_div is the I2S clock divider's integral value
@@ -2172,20 +2137,17 @@ static int i2s_set_clock(struct esp_i2s_s *priv)
    * a is the fraction clock divider's denominator value
    */
 
-  if (priv->config->role == I2S_ROLE_MASTER)
-    {
-      bclk = priv->rate * priv->config->total_slot * priv->data_width;
-      mclk = priv->mclk_freq;
-      bclk_div = mclk / bclk;
-    }
-  else
-    {
-      /* For slave mode, mclk >= bclk * 8, so fix bclk_div to 2 first */
+  if (priv->config->role == I2S_ROLE_MASTER) {
+    bclk = priv->rate * priv->config->total_slot * priv->data_width;
+    mclk = priv->mclk_freq;
+    bclk_div = mclk / bclk;
+  } else {
+    /* For slave mode, mclk >= bclk * 8, so fix bclk_div to 2 first */
 
-      bclk_div = 8;
-      bclk = priv->rate * priv->config->total_slot * priv->data_width;
-      mclk = bclk * bclk_div;
-    }
+    bclk_div = 8;
+    bclk = priv->rate * priv->config->total_slot * priv->data_width;
+    mclk = bclk * bclk_div;
+  }
 
   /* Calculate the nearest integer value of the I2S clock divider */
 
@@ -2201,18 +2163,13 @@ static int i2s_set_clock(struct esp_i2s_s *priv)
   priv->config->clk_info->mclk_div = mclk_div;
   priv->config->clk_info->sclk = sclk;
 
-  PERIPH_RCC_ATOMIC()
-    {
-      i2s_hal_set_tx_clock(priv->config->ctx,
-                           priv->config->clk_info,
-                           priv->config->tx_clk_src,
-                           NULL);
+  PERIPH_RCC_ATOMIC() {
+    i2s_hal_set_tx_clock(priv->config->ctx, priv->config->clk_info,
+                         priv->config->tx_clk_src, NULL);
 
-      i2s_hal_set_rx_clock(priv->config->ctx,
-                           priv->config->clk_info,
-                           priv->config->rx_clk_src,
-                           NULL);
-    }
+    i2s_hal_set_rx_clock(priv->config->ctx, priv->config->clk_info,
+                         priv->config->rx_clk_src, NULL);
+  }
 
   return OK;
 }
@@ -2231,32 +2188,30 @@ static int i2s_set_clock(struct esp_i2s_s *priv)
  *
  ****************************************************************************/
 
-static void i2s_tx_channel_start(struct esp_i2s_s *priv)
-{
-  if (priv->config->tx_en)
-    {
+static void i2s_tx_channel_start(struct esp_i2s_s *priv) {
+  if (priv->config->tx_en) {
 #ifdef CONFIG_PM
-      esp_pm_lock_acquire(priv->config->pm_lock);
+    esp_pm_lock_acquire(priv->config->pm_lock);
 #endif
 
-      /* Reset the TX channel */
+    /* Reset the TX channel */
 
-      i2s_hal_tx_reset(priv->config->ctx);
+    i2s_hal_tx_reset(priv->config->ctx);
 
-      /* Reset TX FIFO */
+    /* Reset TX FIFO */
 
-      i2s_hal_tx_reset_fifo(priv->config->ctx);
+    i2s_hal_tx_reset_fifo(priv->config->ctx);
 
-      /* Set I2S_RX_UPDATE bit to update the configs.
-       * This bit is automatically cleared.
-       */
+    /* Set I2S_RX_UPDATE bit to update the configs.
+     * This bit is automatically cleared.
+     */
 
-      i2s_hal_tx_start(priv->config->ctx);
+    i2s_hal_tx_start(priv->config->ctx);
 
-      priv->tx_started = true;
+    priv->tx_started = true;
 
-      i2sinfo("Started TX channel of port %ld\n", priv->config->port);
-    }
+    i2sinfo("Started TX channel of port %ld\n", priv->config->port);
+  }
 }
 
 /****************************************************************************
@@ -2273,26 +2228,24 @@ static void i2s_tx_channel_start(struct esp_i2s_s *priv)
  *
  ****************************************************************************/
 
-static void i2s_rx_channel_start(struct esp_i2s_s *priv)
-{
-  if (priv->config->rx_en)
-    {
+static void i2s_rx_channel_start(struct esp_i2s_s *priv) {
+  if (priv->config->rx_en) {
 #ifdef CONFIG_PM
-      esp_pm_lock_acquire(priv->config->pm_lock);
+    esp_pm_lock_acquire(priv->config->pm_lock);
 #endif
 
-      /* Reset the RX channel */
+    /* Reset the RX channel */
 
-      i2s_hal_rx_reset(priv->config->ctx);
+    i2s_hal_rx_reset(priv->config->ctx);
 
-      /* Reset RX FIFO */
+    /* Reset RX FIFO */
 
-      i2s_hal_rx_reset_fifo(priv->config->ctx);
+    i2s_hal_rx_reset_fifo(priv->config->ctx);
 
-      priv->rx_started = true;
+    priv->rx_started = true;
 
-      i2sinfo("Started RX channel of port %ld\n", priv->config->port);
-    }
+    i2sinfo("Started RX channel of port %ld\n", priv->config->port);
+  }
 }
 
 /****************************************************************************
@@ -2309,39 +2262,39 @@ static void i2s_rx_channel_start(struct esp_i2s_s *priv)
  *
  ****************************************************************************/
 
-static int i2s_tx_channel_stop(struct esp_i2s_s *priv)
-{
-  if (priv->config->tx_en)
-    {
-      esp_err_t err;
+static int i2s_tx_channel_stop(struct esp_i2s_s *priv) {
+  if (priv->config->tx_en) {
+    esp_err_t err;
 
-      if (!priv->tx_started)
-        {
-          i2swarn("TX channel of port %ld was previously stopped\n",
-                  priv->config->port);
-          return OK;
-        }
+    if (!priv->tx_started) {
+      i2swarn("TX channel of port %ld was previously stopped\n",
+              priv->config->port);
+      return OK;
+    }
 
-      /* Stop TX channel */
+    /* Stop TX channel */
 
-      i2s_hal_tx_stop(priv->config->ctx);
+    i2s_hal_tx_stop(priv->config->ctx);
 
-      /* Stop outlink */
+    /* Restore the hardware default for the next ordinary TX stream. */
 
-      err = gdma_stop(priv->dma_channel_tx);
-      if (err != ESP_OK)
-        {
-          i2serr("Failed to stop DMA channel: %d\n", err);
-          return -EINVAL;
-        }
+    modifyreg32(I2S_TX_CONF_REG(priv->config->port), 0, I2S_TX_STOP_EN);
 
-      priv->tx_started = false;
+    /* Stop outlink */
+
+    err = gdma_stop(priv->dma_channel_tx);
+    if (err != ESP_OK) {
+      i2serr("Failed to stop DMA channel: %d\n", err);
+      return -EINVAL;
+    }
+
+    priv->tx_started = false;
 #ifdef CONFIG_PM
-      esp_pm_lock_release(priv->config->pm_lock);
+    esp_pm_lock_release(priv->config->pm_lock);
 #endif
 
-      i2sinfo("Stopped TX channel of port %ld\n", priv->config->port);
-    }
+    i2sinfo("Stopped TX channel of port %ld\n", priv->config->port);
+  }
 
   return OK;
 }
@@ -2360,37 +2313,33 @@ static int i2s_tx_channel_stop(struct esp_i2s_s *priv)
  *
  ****************************************************************************/
 
-static int i2s_rx_channel_stop(struct esp_i2s_s *priv)
-{
-  if (priv->config->rx_en)
-    {
-      esp_err_t err;
+static int i2s_rx_channel_stop(struct esp_i2s_s *priv) {
+  if (priv->config->rx_en) {
+    esp_err_t err;
 
-      if (!priv->rx_started)
-        {
-          i2swarn("RX channel of port %ld was previously stopped\n",
-                  priv->config->port);
-          return OK;
-        }
+    if (!priv->rx_started) {
+      i2swarn("RX channel of port %ld was previously stopped\n",
+              priv->config->port);
+      return OK;
+    }
 
-      /* Stop RX channel */
+    /* Stop RX channel */
 
-      i2s_hal_rx_stop(priv->config->ctx);
+    i2s_hal_rx_stop(priv->config->ctx);
 
-      err = gdma_stop(priv->dma_channel_rx);
-      if (err != ESP_OK)
-        {
-          i2serr("Failed to stop DMA channel: %d\n", err);
-          return -EINVAL;
-        }
+    err = gdma_stop(priv->dma_channel_rx);
+    if (err != ESP_OK) {
+      i2serr("Failed to stop DMA channel: %d\n", err);
+      return -EINVAL;
+    }
 
-      priv->rx_started = false;
+    priv->rx_started = false;
 #ifdef CONFIG_PM
-      esp_pm_lock_release(priv->config->pm_lock);
+    esp_pm_lock_release(priv->config->pm_lock);
 #endif
 
-      i2sinfo("Stopped RX channel of port %ld\n", priv->config->port);
-    }
+    i2sinfo("Stopped RX channel of port %ld\n", priv->config->port);
+  }
 
   return OK;
 }
@@ -2415,22 +2364,19 @@ static int i2s_rx_channel_stop(struct esp_i2s_s *priv)
 
 static bool IRAM_ATTR i2s_tx_interrupt(gdma_channel_handle_t dma_chan,
                                        gdma_event_data_t *event_data,
-                                       void *arg)
-{
+                                       void *arg) {
   struct esp_i2s_s *priv = (struct esp_i2s_s *)arg;
   lldesc_t *cur = NULL;
 
-  if (event_data->flags.normal_eof)
-    {
-      cur = (lldesc_t *)(event_data->tx_eof_desc_addr);
+  if (event_data->flags.normal_eof) {
+    cur = (lldesc_t *)(event_data->tx_eof_desc_addr);
 
-      /* If the current descriptor is the last one, schedule the transfer */
+    /* If the current descriptor is the last one, schedule the transfer */
 
-      if (STAILQ_NEXT(cur, qe) == NULL)
-        {
-          i2s_tx_schedule(priv, cur);
-        }
+    if (STAILQ_NEXT(cur, qe) == NULL) {
+      i2s_tx_schedule(priv, cur);
     }
+  }
 
   return false;
 }
@@ -2453,9 +2399,7 @@ static bool IRAM_ATTR i2s_tx_interrupt(gdma_channel_handle_t dma_chan,
  ****************************************************************************/
 
 static bool IRAM_ATTR i2s_tx_error(gdma_channel_handle_t dma_chan,
-                                   gdma_event_data_t *event_data,
-                                   void *arg)
-{
+                                   gdma_event_data_t *event_data, void *arg) {
   /* Just panic for now */
 
   PANIC();
@@ -2480,9 +2424,7 @@ static bool IRAM_ATTR i2s_tx_error(gdma_channel_handle_t dma_chan,
  ****************************************************************************/
 
 static bool IRAM_ATTR i2s_rx_error(gdma_channel_handle_t dma_chan,
-                                   gdma_event_data_t *event_data,
-                                   void *arg)
-{
+                                   gdma_event_data_t *event_data, void *arg) {
   /* Just panic for now */
 
   PANIC();
@@ -2510,41 +2452,33 @@ static bool IRAM_ATTR i2s_rx_error(gdma_channel_handle_t dma_chan,
 
 static bool IRAM_ATTR i2s_rx_interrupt(gdma_channel_handle_t dma_chan,
                                        gdma_event_data_t *event_data,
-                                       void *arg)
-{
+                                       void *arg) {
   struct esp_i2s_s *priv = (struct esp_i2s_s *)arg;
   lldesc_t *cur = NULL;
 #if SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE
-  int alignment = cache_hal_get_cache_line_size(CACHE_LL_LEVEL_INT_MEM,
-                                                CACHE_TYPE_DATA);
+  int alignment =
+      cache_hal_get_cache_line_size(CACHE_LL_LEVEL_INT_MEM, CACHE_TYPE_DATA);
 #endif
-  if (event_data->flags.normal_eof)
-    {
-      cur = (lldesc_t *)(event_data->rx_eof_desc_addr);
+  if (event_data->flags.normal_eof) {
+    cur = (lldesc_t *)(event_data->rx_eof_desc_addr);
 
 #if SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE
-      esp_cache_msync(cur,
-                      ALIGN_UP(sizeof(lldesc_t), alignment),
-                      ESP_CACHE_MSYNC_FLAG_DIR_M2C);
-      esp_cache_msync((void *)cur->buf, cur->length,
-                      ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+    esp_cache_msync(cur, ALIGN_UP(sizeof(lldesc_t), alignment),
+                    ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+    esp_cache_msync((void *)cur->buf, cur->length,
+                    ESP_CACHE_MSYNC_FLAG_DIR_M2C);
 #endif
 
-      /* If the current descriptor is the last one, schedule the transfer */
+    /* If the current descriptor is the last one, schedule the transfer */
 
-      if (STAILQ_NEXT(cur, qe) == NULL)
-        {
-          if (cur->eof == 1 && cur->owner == 0)
-            {
-              i2s_rx_schedule(priv, cur);
-            }
-        }
-      else
-        {
-          i2s_ll_rx_set_eof_num(priv->config->ctx->dev,
-                                STAILQ_NEXT(cur, qe)->size);
-        }
+    if (STAILQ_NEXT(cur, qe) == NULL) {
+      if (cur->eof == 1 && cur->owner == 0) {
+        i2s_rx_schedule(priv, cur);
+      }
+    } else {
+      i2s_ll_rx_set_eof_num(priv->config->ctx->dev, STAILQ_NEXT(cur, qe)->size);
     }
+  }
 
   return false;
 }
@@ -2563,8 +2497,7 @@ static bool IRAM_ATTR i2s_rx_interrupt(gdma_channel_handle_t dma_chan,
  *
  ****************************************************************************/
 
-static uint32_t i2s_getmclkfrequency(struct i2s_dev_s *dev)
-{
+static uint32_t i2s_getmclkfrequency(struct i2s_dev_s *dev) {
   struct esp_i2s_s *priv = (struct esp_i2s_s *)dev;
 
   return priv->mclk_freq;
@@ -2588,22 +2521,20 @@ static uint32_t i2s_getmclkfrequency(struct i2s_dev_s *dev)
  ****************************************************************************/
 
 static uint32_t i2s_setmclkfrequency(struct i2s_dev_s *dev,
-                                     uint32_t frequency)
-{
+                                     uint32_t frequency) {
   struct esp_i2s_s *priv = (struct esp_i2s_s *)dev;
   uint32_t source_clk_freq = 0;
 
-  source_clk_freq = i2s_get_source_clk_freq(priv->config->tx_clk_src,
-                                            frequency);
+  source_clk_freq =
+      i2s_get_source_clk_freq(priv->config->tx_clk_src, frequency);
 
   /* Check if the master clock frequency is beyond the highest possible
    * value and return an error.
    */
 
-  if (frequency >= (source_clk_freq / 2))
-    {
-      return -EINVAL;
-    }
+  if (frequency >= (source_clk_freq / 2)) {
+    return -EINVAL;
+  }
 
   priv->mclk_freq = frequency;
 
@@ -2626,65 +2557,61 @@ static uint32_t i2s_setmclkfrequency(struct i2s_dev_s *dev,
  *
  ****************************************************************************/
 
-static int i2s_txchannels(struct i2s_dev_s *dev, uint8_t channels)
-{
+static int i2s_txchannels(struct i2s_dev_s *dev, uint8_t channels) {
   struct esp_i2s_s *priv = (struct esp_i2s_s *)dev;
   uint32_t channels_mask;
   bool is_mono = true;
 
-  if (priv->config->tx_en)
-    {
-      bool is_started = priv->tx_started;
+  if (priv->config->tx_en) {
+    bool is_started = priv->tx_started;
 
-      if (channels == 0)
-        {
-          return priv->channels;
-        }
-
-      if (channels != 1 && channels != 2)
-        {
-          return 0;
-        }
-
-      if (is_started)
-        {
-          i2s_tx_channel_stop(priv);
-        }
-
-      priv->channels = channels;
-
-      /* Always consider two channels. For mono (1-channel), we set the
-       * I2S_TX_TDM_CHAN1_EN to 0 and I2S_TX_CHAN_EQUAL to 1 to send out
-       * the data of the previous channel.
-       */
-
-      /* I2S_TX_TDM_TOT_CHAN_NUM = channels - 1 */
-
-      i2s_ll_tx_set_chan_num(priv->config->ctx->dev, 2);
-
-      channels_mask = I2S_TX_TDM_CHAN0_EN;
-      if (priv->channels > 1)
-        {
-          channels_mask |= I2S_TX_TDM_CHAN0_EN | I2S_TX_TDM_CHAN1_EN;
-          is_mono = false;
-        }
-
-      i2s_ll_tx_enable_mono_mode(priv->config->ctx->dev,
-                                 is_mono);
-
-      i2s_ll_tx_set_active_chan_mask(priv->config->ctx->dev, channels_mask);
-
-      /* Set I2S_TX_UPDATE bit to update the configs.
-       * This bit is automatically cleared.
-       */
-
-      if (is_started)
-        {
-          i2s_tx_channel_start(priv);
-        }
-
+    if (channels == 0) {
       return priv->channels;
     }
+
+    if (channels != 1 && channels != 2) {
+      return 0;
+    }
+
+    if (channels == priv->channels) {
+      return priv->channels;
+    }
+
+    if (is_started) {
+      i2s_tx_channel_stop(priv);
+    }
+
+    priv->channels = channels;
+
+    /* Always consider two channels. For mono (1-channel), we set the
+     * I2S_TX_TDM_CHAN1_EN to 0 and I2S_TX_CHAN_EQUAL to 1 to send out
+     * the data of the previous channel.
+     */
+
+    /* I2S_TX_TDM_TOT_CHAN_NUM = channels - 1 */
+
+    i2s_ll_tx_set_chan_num(priv->config->ctx->dev, 2);
+
+    channels_mask = I2S_TX_TDM_CHAN0_EN;
+    if (priv->channels > 1) {
+      channels_mask |= I2S_TX_TDM_CHAN0_EN | I2S_TX_TDM_CHAN1_EN;
+      is_mono = false;
+    }
+
+    i2s_ll_tx_enable_mono_mode(priv->config->ctx->dev, is_mono);
+
+    i2s_ll_tx_set_active_chan_mask(priv->config->ctx->dev, channels_mask);
+
+    /* Set I2S_TX_UPDATE bit to update the configs.
+     * This bit is automatically cleared.
+     */
+
+    if (is_started) {
+      i2s_tx_channel_start(priv);
+    }
+
+    return priv->channels;
+  }
 
   return 0;
 }
@@ -2705,25 +2632,25 @@ static int i2s_txchannels(struct i2s_dev_s *dev, uint8_t channels)
  *
  ****************************************************************************/
 
-static int i2s_rxchannels(struct i2s_dev_s *dev, uint8_t channels)
-{
+static int i2s_rxchannels(struct i2s_dev_s *dev, uint8_t channels) {
   struct esp_i2s_s *priv = (struct esp_i2s_s *)dev;
 
-  if (priv->config->rx_en)
-    {
-      if (channels == 0)
-        {
-          return priv->channels;
-        }
-
-      if (channels != 1 && channels != 2)
-        {
-          return 0;
-        }
-
-      priv->channels = channels;
+  if (priv->config->rx_en) {
+    if (channels == 0) {
       return priv->channels;
     }
+
+    if (channels != 1 && channels != 2) {
+      return 0;
+    }
+
+    if (channels == priv->channels) {
+      return priv->channels;
+    }
+
+    priv->channels = channels;
+    return priv->channels;
+  }
 
   return 0;
 }
@@ -2747,44 +2674,47 @@ static int i2s_rxchannels(struct i2s_dev_s *dev, uint8_t channels)
  *
  ****************************************************************************/
 
-static uint32_t i2s_txsamplerate(struct i2s_dev_s *dev, uint32_t rate)
-{
+static uint32_t i2s_txsamplerate(struct i2s_dev_s *dev, uint32_t rate) {
   struct esp_i2s_s *priv = (struct esp_i2s_s *)dev;
 
-  if (priv->config->tx_en)
-    {
-      bool is_started = priv->tx_started;
+  if (priv->config->tx_en) {
+    bool is_started = priv->tx_started;
 
-      if (rate == 0)
-        {
-          return priv->rate;
-        }
-
-      if (is_started)
-        {
-          i2s_tx_channel_stop(priv);
-        }
-
-      priv->rate = rate;
-
-      if (i2s_check_mclkfrequency(priv) < 0)
-        {
-          return 0;
-        }
-
-      if (i2s_set_clock(priv) != OK)
-        {
-          i2serr("Failed to set clock\n");
-          return ERROR;
-        }
-
-      if (is_started)
-        {
-          i2s_tx_channel_start(priv);
-        }
-
+    if (rate == 0) {
       return priv->rate;
     }
+
+    /* ES8311 configures both I2S directions for either endpoint.  Do not
+     * stop a live shared clock/RX DMA transfer for an identical setting.
+     * ESP-IDF likewise requires a channel to be disabled before an actual
+     * clock reconfiguration.
+     */
+
+    if (rate == priv->rate) {
+      return priv->rate;
+    }
+
+    if (is_started) {
+      i2s_tx_channel_stop(priv);
+    }
+
+    priv->rate = rate;
+
+    if (i2s_check_mclkfrequency(priv) < 0) {
+      return 0;
+    }
+
+    if (i2s_set_clock(priv) != OK) {
+      i2serr("Failed to set clock\n");
+      return ERROR;
+    }
+
+    if (is_started) {
+      i2s_tx_channel_start(priv);
+    }
+
+    return priv->rate;
+  }
 
   return 0;
 }
@@ -2805,44 +2735,41 @@ static uint32_t i2s_txsamplerate(struct i2s_dev_s *dev, uint32_t rate)
  *
  ****************************************************************************/
 
-static uint32_t i2s_rxsamplerate(struct i2s_dev_s *dev, uint32_t rate)
-{
+static uint32_t i2s_rxsamplerate(struct i2s_dev_s *dev, uint32_t rate) {
   struct esp_i2s_s *priv = (struct esp_i2s_s *)dev;
 
-  if (priv->config->rx_en)
-    {
-      bool is_started = priv->rx_started;
+  if (priv->config->rx_en) {
+    bool is_started = priv->rx_started;
 
-      if (rate == 0)
-        {
-          return priv->rate;
-        }
-
-      if (is_started)
-        {
-          i2s_rx_channel_stop(priv);
-        }
-
-      priv->rate = rate;
-
-      if (i2s_check_mclkfrequency(priv) < 0)
-        {
-          return 0;
-        }
-
-      if (i2s_set_clock(priv) != OK)
-        {
-          i2serr("Failed to set clock\n");
-          return ERROR;
-        }
-
-      if (is_started)
-        {
-          i2s_rx_channel_start(priv);
-        }
-
+    if (rate == 0) {
       return priv->rate;
     }
+
+    if (rate == priv->rate) {
+      return priv->rate;
+    }
+
+    if (is_started) {
+      i2s_rx_channel_stop(priv);
+    }
+
+    priv->rate = rate;
+
+    if (i2s_check_mclkfrequency(priv) < 0) {
+      return 0;
+    }
+
+    if (i2s_set_clock(priv) != OK) {
+      i2serr("Failed to set clock\n");
+      return ERROR;
+    }
+
+    if (is_started) {
+      i2s_rx_channel_start(priv);
+    }
+
+    return priv->rate;
+  }
 
   return 0;
 }
@@ -2864,35 +2791,34 @@ static uint32_t i2s_rxsamplerate(struct i2s_dev_s *dev, uint32_t rate)
  *
  ****************************************************************************/
 
-static uint32_t i2s_txdatawidth(struct i2s_dev_s *dev, int bits)
-{
+static uint32_t i2s_txdatawidth(struct i2s_dev_s *dev, int bits) {
   struct esp_i2s_s *priv = (struct esp_i2s_s *)dev;
 
-  if (priv->config->tx_en)
-    {
-      bool is_started = priv->tx_started;
+  if (priv->config->tx_en) {
+    bool is_started = priv->tx_started;
 
-      if (bits == 0)
-        {
-          return priv->data_width;
-        }
-
-      if (is_started)
-        {
-          i2s_tx_channel_stop(priv);
-        }
-
-      priv->data_width = bits;
-
-      i2s_set_datawidth(priv);
-
-      if (is_started)
-        {
-          i2s_tx_channel_start(priv);
-        }
-
-      return bits;
+    if (bits == 0) {
+      return priv->data_width;
     }
+
+    if (bits == priv->data_width) {
+      return priv->data_width;
+    }
+
+    if (is_started) {
+      i2s_tx_channel_stop(priv);
+    }
+
+    priv->data_width = bits;
+
+    i2s_set_datawidth(priv);
+
+    if (is_started) {
+      i2s_tx_channel_start(priv);
+    }
+
+    return bits;
+  }
 
   return 0;
 }
@@ -2914,35 +2840,34 @@ static uint32_t i2s_txdatawidth(struct i2s_dev_s *dev, int bits)
  *
  ****************************************************************************/
 
-static uint32_t i2s_rxdatawidth(struct i2s_dev_s *dev, int bits)
-{
+static uint32_t i2s_rxdatawidth(struct i2s_dev_s *dev, int bits) {
   struct esp_i2s_s *priv = (struct esp_i2s_s *)dev;
 
-  if (priv->config->rx_en)
-    {
-      bool is_started = priv->rx_started;
+  if (priv->config->rx_en) {
+    bool is_started = priv->rx_started;
 
-      if (bits == 0)
-        {
-          return priv->data_width;
-        }
-
-      if (is_started)
-        {
-          i2s_rx_channel_stop(priv);
-        }
-
-      priv->data_width = bits;
-
-      i2s_set_datawidth(priv);
-
-      if (is_started)
-        {
-          i2s_rx_channel_start(priv);
-        }
-
-      return bits;
+    if (bits == 0) {
+      return priv->data_width;
     }
+
+    if (bits == priv->data_width) {
+      return priv->data_width;
+    }
+
+    if (is_started) {
+      i2s_rx_channel_stop(priv);
+    }
+
+    priv->data_width = bits;
+
+    i2s_set_datawidth(priv);
+
+    if (is_started) {
+      i2s_rx_channel_start(priv);
+    }
+
+    return bits;
+  }
 
   return 0;
 }
@@ -2971,89 +2896,82 @@ static uint32_t i2s_rxdatawidth(struct i2s_dev_s *dev, int bits)
  ****************************************************************************/
 
 static int i2s_send(struct i2s_dev_s *dev, struct ap_buffer_s *apb,
-                    i2s_callback_t callback, void *arg, uint32_t timeout)
-{
+                    i2s_callback_t callback, void *arg, uint32_t timeout) {
   struct esp_i2s_s *priv = (struct esp_i2s_s *)dev;
 
-  if (priv->config->tx_en)
-    {
-      struct esp_buffer_s *bfcontainer;
-      int ret = OK;
-      uint32_t nbytes;
-      uint32_t nsamp;
+  if (priv->config->tx_en) {
+    struct esp_buffer_s *bfcontainer;
+    int ret = OK;
+    uint32_t nbytes;
+    uint32_t nsamp;
 
-      /* Check audio buffer data size from the upper half. If the buffer
-       * size is not a multiple of the data width, the remaining bytes
-       * must be sent along with the next audio buffer.
-       */
+    /* Check audio buffer data size from the upper half. If the buffer
+     * size is not a multiple of the data width, the remaining bytes
+     * must be sent along with the next audio buffer.
+     */
 
-      nbytes = (apb->nbytes - apb->curbyte) + priv->tx.carry.bytes;
+    nbytes = (apb->nbytes - apb->curbyte) + priv->tx.carry.bytes;
 
-      nbytes -= (nbytes % (priv->data_width / 8));
+    nbytes -= (nbytes % (priv->data_width / 8));
 
-      if (nbytes > (I2S_DMA_BUFFER_MAX_SIZE * I2S_DMADESC_NUM))
-        {
-          i2serr("Required buffer size can't fit into DMA outlink "
-                 "(exceeds in %" PRIu32 " bytes). Try to increase the "
-                 "number of the DMA descriptors (CONFIG_I2S_DMADESC_NUM).",
-                 nbytes - (I2S_DMA_BUFFER_MAX_SIZE * I2S_DMADESC_NUM));
-          return -EFBIG;
-        }
-
-      /* Allocate a buffer container in advance */
-
-      bfcontainer = i2s_buf_allocate(priv);
-      if (bfcontainer == NULL)
-        {
-          i2serr("Failed to allocate the buffer container");
-          return -ENOMEM;
-        }
-
-      /* Get exclusive access to the I2S driver data */
-
-      ret = nxmutex_lock(&priv->lock);
-      if (ret < 0)
-        {
-          goto errout_with_buf;
-        }
-
-      /* Add a reference to the audio buffer */
-
-      apb_reference(apb);
-
-      /* Initialize the buffer container structure */
-
-      bfcontainer->callback = callback;
-      bfcontainer->timeout  = timeout;
-      bfcontainer->arg      = arg;
-      bfcontainer->apb      = apb;
-      bfcontainer->nbytes   = nbytes;
-      bfcontainer->result   = -EBUSY;
-
-      ret = i2s_txdma_setup(priv, bfcontainer);
-
-      if (ret != OK)
-        {
-          goto errout_with_buf;
-        }
-
-      i2sinfo("Queued %d bytes into DMA buffers\n", apb->nbytes);
-      i2s_dump_buffer("Audio pipeline buffer:", &apb->samp[apb->curbyte],
-                      apb->nbytes - apb->curbyte);
-
-      nxmutex_unlock(&priv->lock);
-
-      return OK;
-
-errout_with_buf:
-      nxmutex_unlock(&priv->lock);
-      if (i2s_buf_free(priv, bfcontainer) != OK)
-        {
-          i2serr("Failed to free buffer container\n");
-        }
-
-      return ret;
+    if (nbytes > (I2S_DMA_BUFFER_MAX_SIZE * I2S_DMADESC_NUM)) {
+      i2serr("Required buffer size can't fit into DMA outlink "
+             "(exceeds in %" PRIu32 " bytes). Try to increase the "
+             "number of the DMA descriptors (CONFIG_I2S_DMADESC_NUM).",
+             nbytes - (I2S_DMA_BUFFER_MAX_SIZE * I2S_DMADESC_NUM));
+      return -EFBIG;
     }
+
+    /* Allocate a buffer container in advance */
+
+    bfcontainer = i2s_buf_allocate(priv);
+    if (bfcontainer == NULL) {
+      i2serr("Failed to allocate the buffer container");
+      return -ENOMEM;
+    }
+
+    /* Get exclusive access to the I2S driver data */
+
+    ret = nxmutex_lock(&priv->lock);
+    if (ret < 0) {
+      goto errout_with_buf;
+    }
+
+    /* Add a reference to the audio buffer */
+
+    apb_reference(apb);
+
+    /* Initialize the buffer container structure */
+
+    bfcontainer->callback = callback;
+    bfcontainer->timeout = timeout;
+    bfcontainer->arg = arg;
+    bfcontainer->apb = apb;
+    bfcontainer->nbytes = nbytes;
+    bfcontainer->result = -EBUSY;
+
+    ret = i2s_txdma_setup(priv, bfcontainer);
+
+    if (ret != OK) {
+      goto errout_with_buf;
+    }
+
+    i2sinfo("Queued %d bytes into DMA buffers\n", apb->nbytes);
+    i2s_dump_buffer("Audio pipeline buffer:", &apb->samp[apb->curbyte],
+                    apb->nbytes - apb->curbyte);
+
+    nxmutex_unlock(&priv->lock);
+
+    return OK;
+
+  errout_with_buf:
+    nxmutex_unlock(&priv->lock);
+    if (i2s_buf_free(priv, bfcontainer) != OK) {
+      i2serr("Failed to free buffer container\n");
+    }
+
+    return ret;
+  }
 
   return -ENOTTY;
 }
@@ -3082,80 +3000,85 @@ errout_with_buf:
  ****************************************************************************/
 
 static int i2s_receive(struct i2s_dev_s *dev, struct ap_buffer_s *apb,
-                       i2s_callback_t callback, void *arg, uint32_t timeout)
-{
+                       i2s_callback_t callback, void *arg, uint32_t timeout) {
   struct esp_i2s_s *priv = (struct esp_i2s_s *)dev;
 
-  if (priv->config->rx_en)
-    {
-      struct esp_buffer_s *bfcontainer;
-      int ret = OK;
-      uint32_t nbytes;
-      uint32_t nsamp;
+  if (priv->config->rx_en) {
+    struct esp_buffer_s *bfcontainer;
+    int ret = OK;
+    uint32_t nbytes;
+    uint32_t nsamp;
 
-      /* Check max audio buffer data size from the upper half and align the
-       * receiving buffer according to the data width.
-       */
+    /* Check max audio buffer data size from the upper half and align the
+     * receiving buffer according to the data width.
+     */
 
-      nbytes = apb->nmaxbytes;
+    nbytes = apb->nmaxbytes;
 
-      nbytes -= (nbytes % (priv->data_width / 8));
+    nbytes -= (nbytes % (priv->data_width / 8));
 
-      /* Allocate a buffer container in advance */
+    /* Allocate a buffer container in advance */
 
-      bfcontainer = i2s_buf_allocate(priv);
-      if (bfcontainer == NULL)
-        {
-          i2serr("Failed to allocate the buffer container");
-          return -ENOMEM;
-        }
-
-      /* Get exclusive access to the I2S driver data */
-
-      ret = nxmutex_lock(&priv->lock);
-      if (ret < 0)
-        {
-          goto errout_with_buf;
-        }
-
-      /* Add a reference to the audio buffer */
-
-      apb_reference(apb);
-
-      /* Initialize the buffer container structure */
-
-      bfcontainer->callback = callback;
-      bfcontainer->timeout  = timeout;
-      bfcontainer->arg      = arg;
-      bfcontainer->apb      = apb;
-      bfcontainer->nbytes   = nbytes;
-      bfcontainer->result   = -EBUSY;
-
-      ret = i2s_rxdma_setup(priv, bfcontainer);
-
-      if (ret != OK)
-        {
-          goto errout_with_buf;
-        }
-
-      i2sinfo("Prepared %d bytes to receive DMA buffers\n", apb->nmaxbytes);
-      i2s_dump_buffer("Received Audio pipeline buffer:",
-                      &apb->samp[apb->curbyte],
-                      apb->nbytes - apb->curbyte);
-
-      nxmutex_unlock(&priv->lock);
-
-      return OK;
-
-errout_with_buf:
-      nxmutex_unlock(&priv->lock);
-      if (i2s_buf_free(priv, bfcontainer) != OK)
-        {
-          i2serr("Failed to free buffer container\n");
-        }
-
-      return ret;
+    bfcontainer = i2s_buf_allocate(priv);
+    if (bfcontainer == NULL) {
+      i2serr("Failed to allocate the buffer container");
+      return -ENOMEM;
     }
+
+    /* Get exclusive access to the I2S driver data */
+
+    ret = nxmutex_lock(&priv->lock);
+    if (ret < 0) {
+      goto errout_with_buf;
+    }
+
+    /* Add a reference to the audio buffer */
+
+    apb_reference(apb);
+
+    /* Initialize the buffer container structure */
+
+    bfcontainer->callback = callback;
+    bfcontainer->timeout = timeout;
+    bfcontainer->arg = arg;
+    bfcontainer->apb = apb;
+    bfcontainer->nbytes = nbytes;
+    bfcontainer->result = -EBUSY;
+
+    ret = i2s_rxdma_setup(priv, bfcontainer);
+
+    if (ret != OK) {
+      goto errout_with_buf;
+    }
+
+#ifdef CONFIG_CONTEST2026_128_XIAOZHI_AUDIO_DIAGNOSTICS
+    if (priv->rx_diag_count < 8) {
+      xiaozhi_ainfo("I2S RX submit=%u ret=%d streaming=%u tx=%u rx=%u "
+                    "tx_conf=%08" PRIx32 " rx_conf=%08" PRIx32 "\n",
+                    priv->rx_diag_count, ret, priv->streaming, priv->tx_started,
+                    priv->rx_started,
+                    getreg32(I2S_TX_CONF_REG(priv->config->port)),
+                    getreg32(I2S_RX_CONF_REG(priv->config->port)));
+      priv->rx_diag_count++;
+    }
+#endif
+
+    i2sinfo("Prepared %d bytes to receive DMA buffers\n", apb->nmaxbytes);
+    i2s_dump_buffer("Received Audio pipeline buffer:", &apb->samp[apb->curbyte],
+                    apb->nbytes - apb->curbyte);
+
+    nxmutex_unlock(&priv->lock);
+
+    return OK;
+
+  errout_with_buf:
+    nxmutex_unlock(&priv->lock);
+    if (i2s_buf_free(priv, bfcontainer) != OK) {
+      i2serr("Failed to free buffer container\n");
+    }
+
+    return ret;
+  }
 
   return -ENOTTY;
 }
@@ -3176,79 +3099,84 @@ errout_with_buf:
  *
  ****************************************************************************/
 
-static int i2s_ioctl(struct i2s_dev_s *dev, int cmd, unsigned long arg)
-{
+static int i2s_ioctl(struct i2s_dev_s *dev, int cmd, unsigned long arg) {
   struct esp_i2s_s *priv = (struct esp_i2s_s *)dev;
-  struct audio_buf_desc_s  *bufdesc;
+  struct audio_buf_desc_s *bufdesc;
   int ret = -ENOTTY;
 
-  switch (cmd)
-    {
-      /* AUDIOIOC_START - Start the audio stream.
-       *
-       *   ioctl argument:  Audio session
-       */
+  switch (cmd) {
+    /* AUDIOIOC_START - Start the audio stream.
+     *
+     *   ioctl argument:  Audio session
+     */
 
-      case AUDIOIOC_START:
-        {
-          i2sinfo("AUDIOIOC_START\n");
+  case AUDIOIOC_START: {
+#ifdef CONFIG_CONTEST2026_128_XIAOZHI_AUDIO_DIAGNOSTICS
+    xiaozhi_ainfo("I2S start port=%" PRIu32 " tx_conf=%08" PRIx32
+                  " rx_conf=%08" PRIx32 "\n",
+                  priv->config->port,
+                  getreg32(I2S_TX_CONF_REG(priv->config->port)),
+                  getreg32(I2S_RX_CONF_REG(priv->config->port)));
+#endif
 
-          priv->streaming = true;
+    priv->streaming = true;
+#ifdef CONFIG_CONTEST2026_128_XIAOZHI_AUDIO_DIAGNOSTICS
+    priv->rx_diag_count = 0;
+#endif
 
-          ret = OK;
-        }
-        break;
+    ret = OK;
+  } break;
 
-      /* AUDIOIOC_STOP - Stop the audio stream.
-       *
-       *   ioctl argument:  Audio session
-       */
+  /* AUDIOIOC_STOP - Stop the audio stream.
+   *
+   *   ioctl argument:  Audio session
+   */
 
 #ifndef CONFIG_AUDIO_EXCLUDE_STOP
-      case AUDIOIOC_STOP:
-        {
-          i2sinfo("AUDIOIOC_STOP\n");
+  case AUDIOIOC_STOP: {
+#ifdef CONFIG_CONTEST2026_128_XIAOZHI_AUDIO_DIAGNOSTICS
+    xiaozhi_ainfo("I2S stop port=%" PRIu32 " tx=%u rx=%u tx_conf=%08" PRIx32
+                  " rx_conf=%08" PRIx32 "\n",
+                  priv->config->port, priv->tx_started, priv->rx_started,
+                  getreg32(I2S_TX_CONF_REG(priv->config->port)),
+                  getreg32(I2S_RX_CONF_REG(priv->config->port)));
+#endif
 
-          priv->streaming = false;
+    priv->streaming = false;
 
-          ret = OK;
-        }
-        break;
+    ret = OK;
+  } break;
 #endif /* CONFIG_AUDIO_EXCLUDE_STOP */
 
-      /* AUDIOIOC_ALLOCBUFFER - Allocate an audio buffer
-       *
-       *   ioctl argument:  pointer to an audio_buf_desc_s structure
-       */
+    /* AUDIOIOC_ALLOCBUFFER - Allocate an audio buffer
+     *
+     *   ioctl argument:  pointer to an audio_buf_desc_s structure
+     */
 
-      case AUDIOIOC_ALLOCBUFFER:
-        {
-          i2sinfo("AUDIOIOC_ALLOCBUFFER\n");
+  case AUDIOIOC_ALLOCBUFFER: {
+    i2sinfo("AUDIOIOC_ALLOCBUFFER\n");
 
-          bufdesc = (struct audio_buf_desc_s *) arg;
-          ret = apb_alloc(bufdesc);
-        }
-        break;
+    bufdesc = (struct audio_buf_desc_s *)arg;
+    ret = apb_alloc(bufdesc);
+  } break;
 
-      /* AUDIOIOC_FREEBUFFER - Free an audio buffer
-       *
-       *   ioctl argument:  pointer to an audio_buf_desc_s structure
-       */
+    /* AUDIOIOC_FREEBUFFER - Free an audio buffer
+     *
+     *   ioctl argument:  pointer to an audio_buf_desc_s structure
+     */
 
-      case AUDIOIOC_FREEBUFFER:
-        {
-          i2sinfo("AUDIOIOC_FREEBUFFER\n");
+  case AUDIOIOC_FREEBUFFER: {
+    i2sinfo("AUDIOIOC_FREEBUFFER\n");
 
-          bufdesc = (struct audio_buf_desc_s *) arg;
-          DEBUGASSERT(bufdesc->u.buffer != NULL);
-          apb_free(bufdesc->u.buffer);
-          ret = sizeof(struct audio_buf_desc_s);
-        }
-        break;
+    bufdesc = (struct audio_buf_desc_s *)arg;
+    DEBUGASSERT(bufdesc->u.buffer != NULL);
+    apb_free(bufdesc->u.buffer);
+    ret = sizeof(struct audio_buf_desc_s);
+  } break;
 
-      default:
-        break;
-    }
+  default:
+    break;
+  }
 
   return ret;
 }
@@ -3269,37 +3197,32 @@ static int i2s_ioctl(struct i2s_dev_s *dev, int cmd, unsigned long arg)
  *
  ****************************************************************************/
 
-static int i2s_dma_setup(struct esp_i2s_s *priv)
-{
+static int i2s_dma_setup(struct esp_i2s_s *priv) {
   int ret = OK;
   esp_err_t err;
-  gdma_trigger_t trig =
-    {
-      0
-    };
+  gdma_trigger_t trig = {0};
 
-  switch (priv->config->port)
-    {
+  switch (priv->config->port) {
 #if SOC_I2S_NUM > 2
-      case I2S_NUM_2:
-        trig = GDMA_MAKE_TRIGGER(GDMA_TRIG_PERIPH_I2S, 2);
-        break;
+  case I2S_NUM_2:
+    trig = GDMA_MAKE_TRIGGER(GDMA_TRIG_PERIPH_I2S, 2);
+    break;
 #endif
 
 #if SOC_I2S_NUM > 1
-      case I2S_NUM_1:
-      trig = GDMA_MAKE_TRIGGER(GDMA_TRIG_PERIPH_I2S, 1);
-      break;
+  case I2S_NUM_1:
+    trig = GDMA_MAKE_TRIGGER(GDMA_TRIG_PERIPH_I2S, 1);
+    break;
 #endif
 
-      case I2S_NUM_0:
-      trig = GDMA_MAKE_TRIGGER(GDMA_TRIG_PERIPH_I2S, 0);
-      break;
+  case I2S_NUM_0:
+    trig = GDMA_MAKE_TRIGGER(GDMA_TRIG_PERIPH_I2S, 0);
+    break;
 
-      default:
-        i2serr("Unsupported I2S port number");
-        return ESP_ERR_NOT_SUPPORTED;
-    }
+  default:
+    i2serr("Unsupported I2S port number");
+    return ESP_ERR_NOT_SUPPORTED;
+  }
 
   /* Set up to receive GDMA interrupts on the current CPU. Each TX/RX channel
    * will be assigned to a different CPU interrupt.
@@ -3307,113 +3230,91 @@ static int i2s_dma_setup(struct esp_i2s_s *priv)
 
   priv->cpu = this_cpu();
 
-  if (priv->config->tx_en)
-    {
-      gdma_channel_alloc_config_t tx_handle =
-        {
-          0
-        };
+  if (priv->config->tx_en) {
+    gdma_channel_alloc_config_t tx_handle = {0};
 
-      err = gdma_new_ahb_channel(&tx_handle, &priv->dma_channel_tx, NULL);
-      if (err != ESP_OK)
-        {
-          i2serr("Failed to register tx dma channel: %d\n", err);
-          return -EINVAL;
-        }
-
-      err = gdma_connect(priv->dma_channel_tx, trig);
-      if (err != ESP_OK)
-        {
-          i2serr("Failed to connect tx dma channel: %d\n", err);
-          ret = -EINVAL;
-          goto err1;
-        }
-
-      gdma_tx_event_callbacks_t cb_tx =
-        {
-          .on_trans_eof = i2s_tx_interrupt,
-          .on_descr_err = i2s_tx_error,
-        };
-
-      /* Set callback function for GDMA, the interrupt is triggered by GDMA,
-       * then the GDMA ISR will call the callback function.
-       */
-
-      err = gdma_register_tx_event_callbacks(priv->dma_channel_tx,
-                                             &cb_tx, priv);
-      if (err != ESP_OK)
-        {
-          i2serr("Failed to register tx callback: %d\n", err);
-          ret = -EINVAL;
-          goto err2;
-        }
+    err = gdma_new_ahb_channel(&tx_handle, &priv->dma_channel_tx, NULL);
+    if (err != ESP_OK) {
+      i2serr("Failed to register tx dma channel: %d\n", err);
+      return -EINVAL;
     }
 
-  if (priv->config->rx_en)
-    {
-      gdma_channel_alloc_config_t rx_handle =
-        {
-          0
-        };
-
-      err = gdma_new_ahb_channel(&rx_handle, NULL, &priv->dma_channel_rx);
-      if (err != ESP_OK)
-        {
-          i2serr("Failed to register rx dma channel: %d\n", err);
-          return -EINVAL;
-        }
-
-      err = gdma_connect(priv->dma_channel_rx, trig);
-      if (err != ESP_OK)
-        {
-          i2serr("Failed to connect rx dma channel: %d\n", err);
-          ret = -EINVAL;
-          goto err1;
-        }
-
-      gdma_rx_event_callbacks_t cb_rx =
-        {
-          .on_recv_eof = i2s_rx_interrupt,
-          .on_descr_err = i2s_rx_error,
-        };
-
-      /* Set callback function for GDMA, the interrupt is triggered by GDMA,
-       * then the GDMA ISR will call the callback function.
-       */
-
-      err = gdma_register_rx_event_callbacks(priv->dma_channel_rx,
-                                             &cb_rx, priv);
-      if (err != ESP_OK)
-        {
-          i2serr("Failed to register rx callback: %d\n", err);
-          ret = -EINVAL;
-          goto err2;
-        }
+    err = gdma_connect(priv->dma_channel_tx, trig);
+    if (err != ESP_OK) {
+      i2serr("Failed to connect tx dma channel: %d\n", err);
+      ret = -EINVAL;
+      goto err1;
     }
+
+    gdma_tx_event_callbacks_t cb_tx = {
+        .on_trans_eof = i2s_tx_interrupt,
+        .on_descr_err = i2s_tx_error,
+    };
+
+    /* Set callback function for GDMA, the interrupt is triggered by GDMA,
+     * then the GDMA ISR will call the callback function.
+     */
+
+    err = gdma_register_tx_event_callbacks(priv->dma_channel_tx, &cb_tx, priv);
+    if (err != ESP_OK) {
+      i2serr("Failed to register tx callback: %d\n", err);
+      ret = -EINVAL;
+      goto err2;
+    }
+  }
+
+  if (priv->config->rx_en) {
+    gdma_channel_alloc_config_t rx_handle = {0};
+
+    err = gdma_new_ahb_channel(&rx_handle, NULL, &priv->dma_channel_rx);
+    if (err != ESP_OK) {
+      i2serr("Failed to register rx dma channel: %d\n", err);
+      return -EINVAL;
+    }
+
+    err = gdma_connect(priv->dma_channel_rx, trig);
+    if (err != ESP_OK) {
+      i2serr("Failed to connect rx dma channel: %d\n", err);
+      ret = -EINVAL;
+      goto err1;
+    }
+
+    gdma_rx_event_callbacks_t cb_rx = {
+        .on_recv_eof = i2s_rx_interrupt,
+        .on_descr_err = i2s_rx_error,
+    };
+
+    /* Set callback function for GDMA, the interrupt is triggered by GDMA,
+     * then the GDMA ISR will call the callback function.
+     */
+
+    err = gdma_register_rx_event_callbacks(priv->dma_channel_rx, &cb_rx, priv);
+    if (err != ESP_OK) {
+      i2serr("Failed to register rx callback: %d\n", err);
+      ret = -EINVAL;
+      goto err2;
+    }
+  }
 
   return OK;
 
 err2:
-  if (priv->config->tx_en)
-    {
-      gdma_disconnect(priv->dma_channel_tx);
-    }
+  if (priv->config->tx_en) {
+    gdma_disconnect(priv->dma_channel_tx);
+  }
 
-  if (priv->config->rx_en)
-    {
-      gdma_disconnect(priv->dma_channel_rx);
-    }
+  if (priv->config->rx_en) {
+    gdma_disconnect(priv->dma_channel_rx);
+  }
 
 err1:
-  if (priv->config->tx_en)
-    {
-      gdma_del_channel(priv->dma_channel_tx);
-    }
+  if (priv->config->tx_en) {
+    gdma_del_channel(priv->dma_channel_tx);
+  }
 
-  if (priv->config->rx_en)
-    {
-      gdma_del_channel(priv->dma_channel_rx);
-    }
+  if (priv->config->rx_en) {
+    gdma_del_channel(priv->dma_channel_rx);
+  }
 
   return ret;
 }
@@ -3432,8 +3333,7 @@ err1:
  *
  ****************************************************************************/
 
-struct i2s_dev_s *esp_i2sbus_initialize(int port)
-{
+struct i2s_dev_s *esp_i2sbus_initialize(int port) {
   int ret;
   struct esp_i2s_s *priv = NULL;
   irqstate_t flags;
@@ -3445,76 +3345,64 @@ struct i2s_dev_s *esp_i2sbus_initialize(int port)
 
   /* Statically allocated I2S' device structure */
 
-  switch (port)
-    {
+  switch (port) {
 #ifdef CONFIG_ESPRESSIF_I2S0
-      case ESPRESSIF_I2S0:
-        priv = &esp_i2s0_priv;
-        break;
+  case ESPRESSIF_I2S0:
+    priv = &esp_i2s0_priv;
+    break;
 #endif
-      default:
-        return NULL;
-    }
+  default:
+    return NULL;
+  }
 
   /* Allocate buffer containers */
 
   ret = i2s_buf_initialize(priv);
-  if (ret < 0)
-    {
-      return NULL;
-    }
+  if (ret < 0) {
+    return NULL;
+  }
 
   flags = spin_lock_irqsave(&priv->slock);
 
 #ifdef CONFIG_PM
-#  if SOC_I2S_SUPPORTS_APLL && SOC_I2S_HW_VERSION_2
+#if SOC_I2S_SUPPORTS_APLL && SOC_I2S_HW_VERSION_2
   if (priv.tx_clk_src == I2S_CLK_SRC_APLL &&
-      priv.tx_clk_src == I2S_CLK_SRC_APLL)
-    {
-      pm_type = ESP_PM_NO_LIGHT_SLEEP;
-    }
-#  endif
+      priv.tx_clk_src == I2S_CLK_SRC_APLL) {
+    pm_type = ESP_PM_NO_LIGHT_SLEEP;
+  }
+#endif
 
-  if (priv->config->pm_lock == NULL)
-    {
-      esp_pm_lock_handle_t pm_lock = priv->config->pm_lock;
-      ret =  esp_pm_lock_create(pm_type,
-                                0,
-                                "i2s_driver",
-                                &pm_lock);
-      if (ret != OK)
-        {
-          i2serr("Failed to create I2S PM lock\n");
-          goto err;
-        }
+  if (priv->config->pm_lock == NULL) {
+    esp_pm_lock_handle_t pm_lock = priv->config->pm_lock;
+    ret = esp_pm_lock_create(pm_type, 0, "i2s_driver", &pm_lock);
+    if (ret != OK) {
+      i2serr("Failed to create I2S PM lock\n");
+      goto err;
     }
+  }
 #endif
 
   ret = i2s_configure(priv);
-  if (ret < 0)
-    {
-      goto err;
-    }
+  if (ret < 0) {
+    goto err;
+  }
 
   ret = i2s_dma_setup(priv);
-  if (ret < 0)
-    {
-      goto err;
-    }
+  if (ret < 0) {
+    goto err;
+  }
 
   /* Start TX channel */
 
-  if (priv->config->tx_en)
-    {
-      priv->tx_started = false;
-    }
+  if (priv->config->tx_en) {
+    priv->tx_started = false;
+  }
 
   /* Start RX channel */
 
-  if (priv->config->rx_en)
-    {
-      priv->rx_started = false;
-    }
+  if (priv->config->rx_en) {
+    priv->rx_started = false;
+  }
 
   spin_unlock_irqrestore(&priv->slock, flags);
 

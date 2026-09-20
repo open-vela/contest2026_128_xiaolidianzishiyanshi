@@ -226,6 +226,15 @@ int esp_bringup(void)
     }
 #endif
 
+#ifdef CONFIG_ESP32P4_FUNCTION_EV_BOARD_SC2336
+  ret = board_sc2336_initialize();
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ERROR: Failed to initialize SC2336 camera: %d\n",
+             ret);
+    }
+#endif
+
   printf("Mount procfs at /proc: %d\n", ret);
 #ifdef CONFIG_FS_PROCFS
   /* Mount the procfs file system */
@@ -385,7 +394,15 @@ int esp_bringup(void)
     }
 #endif
 
-#if defined(CONFIG_ESPRESSIF_I2S)
+#ifdef CONFIG_AUDIO_ES8311
+  /* The codec owns I2S0 and exposes both full NuttX Audio endpoints. */
+
+  ret = board_es8311_initialize();
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "Failed to initialize ES8311 audio: %d\n", ret);
+    }
+#elif defined(CONFIG_ESPRESSIF_I2S)
   /* Configure I2S peripheral interfaces */
 
   ret = board_i2s_init();

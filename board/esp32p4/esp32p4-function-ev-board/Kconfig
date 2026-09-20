@@ -19,4 +19,68 @@ config ESP32P4_FUNCTION_EV_BOARD_TOUCHSCREEN
 		board devices and is registered as /dev/input0.  The adapter does
 		not route the GT911 interrupt or reset signals to the ESP32-P4.
 
+config ESP32P4_FUNCTION_EV_BOARD_SC2336
+	bool "Experimental SC2336 MIPI-CSI camera"
+	default n
+	depends on ESPRESSIF_I2C0 && ESPRESSIF_MIPI_CSI
+	help
+		Enable the SC2336 camera on I2C0 at address 0x30 and register it as
+		/dev/video0.  The fixed mode is 1280x720 at 30 fps, two CSI lanes at
+		405 Mbps/lane, packed BGGR RAW10.
+
+		The current NuttX imgdata ABI lacks Bayer RAW10, so V4L2 ENTROPY is
+		used only as an experimental opaque transport token.  This is not an
+		ISP or a standard Bayer V4L2 ABI.  Camera XCLK must be supplied by the
+		module because the official board BSP marks XCLK as GPIO_NUM_NC.
+
+if AUDIO_ES8311
+
+config ESP32P4_FUNCTION_EV_BOARD_ES8311_I2C_PORT
+	int "ES8311 I2C port"
+	range 0 1
+	default 0
+	---help---
+		I2C controller connected to the ES8311 control interface.  Select
+		SDA and SCL with the corresponding ESPRESSIF_I2C<n> options.
+
+config ESP32P4_FUNCTION_EV_BOARD_ES8311_I2C_ADDRESS
+	hex "ES8311 I2C address"
+	range 0x00 0x7f
+	default 0x18
+
+config ESP32P4_FUNCTION_EV_BOARD_ES8311_I2C_FREQUENCY
+	int "ES8311 I2C frequency"
+	range 10000 1000000
+	default 400000
+
+config ESP32P4_FUNCTION_EV_BOARD_ES8311_I2S_PORT
+	int "ES8311 I2S port"
+	range 0 0
+	default 0
+	---help---
+		I2S controller connected to the ES8311 digital audio interface.
+		MCLK, BCLK, WS, DIN and DOUT remain configurable through the
+		ESPRESSIF_I2S0_* options.
+
+config ESP32P4_FUNCTION_EV_BOARD_ES8311_PA_ENABLE
+	bool "Control an external speaker amplifier enable pin"
+	default n
+	---help---
+		Enable this when the ES8311 speaker output is connected through an
+		external power amplifier with a GPIO enable input.  Leave it disabled
+		until the board wiring and active level are known.
+
+config ESP32P4_FUNCTION_EV_BOARD_ES8311_PA_PIN
+	int "External speaker amplifier enable GPIO"
+	range 0 54
+	default 0
+	depends on ESP32P4_FUNCTION_EV_BOARD_ES8311_PA_ENABLE
+
+config ESP32P4_FUNCTION_EV_BOARD_ES8311_PA_ACTIVE_HIGH
+	bool "External speaker amplifier enable is active high"
+	default y
+	depends on ESP32P4_FUNCTION_EV_BOARD_ES8311_PA_ENABLE
+
+endif # AUDIO_ES8311
+
 endif # ARCH_BOARD_CUSTOM

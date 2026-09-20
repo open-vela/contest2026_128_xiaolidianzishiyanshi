@@ -32,6 +32,10 @@ ifeq ($(CONFIG_ESPRESSIF_MIPI_DSI),y)
 	CHIP_CSRCS += esp_mipi_dsi.c
 endif
 
+ifeq ($(CONFIG_ESPRESSIF_MIPI_CSI),y)
+	CHIP_CSRCS += esp_mipi_csi.c
+endif
+
 ifeq ($(CONFIG_ESP32P4_PPA),y)
 	CHIP_CSRCS += esp32p4_ppa.c esp32p4_ppa_hal.c esp32p4_ppa_dma2d.c
 endif

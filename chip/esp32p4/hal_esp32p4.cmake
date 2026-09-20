@@ -573,13 +573,25 @@ if(CONFIG_ESPRESSIF_IDF_ENV_FPGA)
                       esp_common_include_fpga_overrides_rng)
 endif()
 
+if(CONFIG_ESPRESSIF_MIPI_DSI OR CONFIG_ESPRESSIF_MIPI_CSI)
+  list(APPEND HAL_SRCS
+       ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_dma/dw_gdma_hal.c)
+endif()
+
 if(CONFIG_ESPRESSIF_MIPI_DSI)
   list(
     APPEND
     HAL_SRCS
     ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_lcd/mipi_dsi_hal.c
-    ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_lcd/${CHIP_SERIES}/mipi_dsi_periph.c
-    ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_dma/dw_gdma_hal.c)
+    ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_lcd/${CHIP_SERIES}/mipi_dsi_periph.c)
+endif()
+
+if(CONFIG_ESPRESSIF_MIPI_CSI)
+  list(
+    APPEND
+    HAL_SRCS
+    ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_cam/mipi_csi_hal.c
+    ${ESP_HAL_3RDPARTY_REPO}/components/esp_hal_cam/${CHIP_SERIES}/mipi_csi_periph.c)
 endif()
 
 if(CONFIG_ESP32P4_PPA)
