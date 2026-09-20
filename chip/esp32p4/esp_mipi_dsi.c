@@ -27,11 +27,13 @@
 
 #include <errno.h>
 #include <sched.h>
+#include <semaphore.h>
 #include <stdint.h>
 #include <string.h>
 #include <syslog.h>
 
 #include <nuttx/arch.h>
+#include <nuttx/clock.h>
 #include <nuttx/irq.h>
 #include <nuttx/kmalloc.h>
 #include <nuttx/mutex.h>
@@ -61,6 +63,9 @@
 #include "soc/mipi_dsi_bridge_reg.h"
 
 #include "esp_mipi_dsi.h"
+#ifdef CONFIG_ESPRESSIF_MIPI_CSI
+#include "esp_mipi_csi.h"
+#endif
 
 /****************************************************************************
  * Pre-processor Definitions
@@ -69,6 +74,7 @@
 #define DSI_BUS 0
 #define DSI_POLL_LOOPS 100000
 #define DSI_DMA_CHANNEL 0
+#define DSI_FLIP_TIMEOUT_TICKS MSEC2TICK(100)
 #define DSI_DMA_ERROR_EVENTS                                                \
   (DW_GDMA_LL_CHANNEL_EVENT_SRC_DEC_ERR |                                   \
    DW_GDMA_LL_CHANNEL_EVENT_DST_DEC_ERR |                                   \
@@ -107,6 +113,8 @@ struct esp_dsi_s {
   uint32_t underrun_reported;
   volatile uint8_t current_fb;
   volatile uint8_t pending_fb;
+  sem_t flip_sem;
+  volatile bool flip_waiting;
   struct fb_area_s last_update;
   bool last_update_valid;
   bool initialized;
@@ -126,6 +134,7 @@ static struct esp_dsi_s g_dsi = {
   .lock = NXMUTEX_INITIALIZER,
   .dma_cpuint = -1,
   .bridge_cpuint = -1,
+  .flip_sem = SEM_INITIALIZER(0),
 };
 
 static dw_gdma_link_list_item_t g_dsi_dma_lli;
@@ -181,6 +190,7 @@ static int esp_dsi_getplaneinfo(struct fb_vtable_s* vtable, int planeno,
 static int esp_dsi_pandisplay(struct fb_vtable_s* vtable,
                               struct fb_planeinfo_s* pinfo) {
   uint32_t fb;
+  int ret;
 
   (void)vtable;
 
@@ -191,12 +201,34 @@ static int esp_dsi_pandisplay(struct fb_vtable_s* vtable,
 
   fb = pinfo->yoffset / g_config->height;
 
-  /* Commit the completed LVGL draw buffer at the next frame boundary.  The
-   * DMA completion ISR owns the actual descriptor switch, so the buffer
-   * currently being scanned is never changed halfway through a frame.
+  /* Commit the completed LVGL draw buffer at the next frame boundary and do
+   * not return it to LVGL until the switch has really happened.  LVGL's
+   * NuttX flush callback marks a buffer ready as soon as FBIOPAN_DISPLAY
+   * returns.  Returning early would therefore let the next refresh write the
+   * old buffer while the display DMA is still scanning it, which appears as
+   * flicker confined to the dirty rectangle.
+   *
+   * Set flip_waiting before pending_fb so an interrupt in between can only
+   * produce a harmless extra wake-up.  The loop also consumes such a stale
+   * wake-up before waiting for the requested frame.
    */
 
+  g_dsi.flip_waiting = true;
   g_dsi.pending_fb = fb;
+
+  while (g_dsi.current_fb != fb) {
+    ret = nxsem_tickwait_uninterruptible(&g_dsi.flip_sem,
+                                         DSI_FLIP_TIMEOUT_TICKS);
+    if (ret < 0) {
+      g_dsi.flip_waiting = false;
+      syslog(LOG_ERR,
+             "ERROR: MIPI framebuffer flip to %lu timed out: %d\n",
+             (unsigned long)fb, ret);
+      return ret;
+    }
+  }
+
+  g_dsi.flip_waiting = false;
   return OK;
 }
 
@@ -583,9 +615,21 @@ static int esp_dsi_dma_interrupt(int irq, void* context, void* arg) {
     priv->dma_error |= status & DSI_DMA_ERROR_EVENTS;
   } else if ((status & DW_GDMA_LL_CHANNEL_EVENT_DMA_TFR_DONE) != 0) {
     esp_dsi_dma_reload(priv);
+    if (priv->flip_waiting) {
+      nxsem_post(&priv->flip_sem);
+    }
     fb_notify_vsync(&g_fbops);
     (void)fb_remove_paninfo(&g_fbops, FB_NO_OVERLAY);
   }
+
+#ifdef CONFIG_ESPRESSIF_MIPI_CSI
+  /* DW-GDMA exposes one interrupt source for all channels.  DSI owns channel
+   * 0 and CSI owns channel 1, so service the camera completion from this
+   * shared dispatcher instead of registering the same source twice.
+   */
+
+  (void)esp_mipi_csi_dma_interrupt(irq, context, NULL);
+#endif
 
   return OK;
 }
@@ -729,8 +773,13 @@ static int esp_dsi_dma_initialize(struct esp_dsi_s* priv) {
     return cpuint;
   }
 
-  priv->current_fb = 0;
-  priv->pending_fb = 0;
+  /* LVGL starts drawing in buffer 0.  Scan the cleared second buffer first so
+   * even the initial full-screen render is performed off screen.
+   */
+
+  priv->current_fb = 1;
+  priv->pending_fb = 1;
+  priv->flip_waiting = false;
   priv->last_update_valid = false;
   esp_dsi_dma_reload(priv);
   return OK;

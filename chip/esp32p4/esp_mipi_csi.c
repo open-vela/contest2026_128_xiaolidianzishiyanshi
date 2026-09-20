@@ -247,14 +247,20 @@ static void esp_csi_complete_worker(FAR void *arg)
     }
 }
 
-static int IRAM_ATTR esp_csi_interrupt(int irq, FAR void *context,
-                                       FAR void *arg)
+int IRAM_ATTR esp_mipi_csi_dma_interrupt(int irq, FAR void *context,
+                                         FAR void *arg)
 {
-  FAR struct esp_csi_s *priv = arg;
+  FAR struct esp_csi_s *priv = &g_csi;
   uint32_t status;
 
   (void)irq;
   (void)context;
+  (void)arg;
+
+  if (priv->dma.dev == NULL)
+    {
+      return OK;
+    }
 
   status = dw_gdma_ll_channel_get_intr_status(priv->dma.dev,
                                                CSI_DMA_CHANNEL);
@@ -296,7 +302,9 @@ static int esp_csi_hardware_initialize(FAR struct esp_csi_s *priv)
   uint8_t dref;
   uint8_t mul;
   bool use_rail;
+#ifndef CONFIG_ESPRESSIF_MIPI_DSI
   int cpuint;
+#endif
 
   ldo_ll_voltage_to_dref_mul(LDO_ID2UNIT(3), 2500, &dref, &mul, &use_rail);
   flags = enter_critical_section();
@@ -310,6 +318,16 @@ static int esp_csi_hardware_initialize(FAR struct esp_csi_s *priv)
   PERIPH_RCC_ATOMIC()
     {
       clk_gate_ll_ref_20m_clk_en(true);
+      /* The host and bridge have independent gates.  The Espressif CSI
+       * controller claims and clocks the bridge before touching either MMIO
+       * block.  Without this sequence, the first CSI host register access can
+       * raise a load-access fault on ESP32-P4.
+       */
+
+      mipi_csi_ll_enable_brg_module_clock(CSI_BUS, true);
+      mipi_csi_ll_reset_brg_module_clock(CSI_BUS);
+      mipi_csi_brg_ll_enable_clock(
+        MIPI_CSI_BRG_LL_GET_HW(CSI_BUS), true);
       mipi_csi_ll_enable_host_bus_clock(CSI_BUS, false);
       mipi_csi_ll_enable_host_bus_clock(CSI_BUS, true);
       mipi_csi_ll_reset_host_clock(CSI_BUS);
@@ -365,9 +383,16 @@ static int esp_csi_hardware_initialize(FAR struct esp_csi_s *priv)
   dw_gdma_ll_channel_clear_intr(priv->dma.dev, CSI_DMA_CHANNEL,
                                 UINT32_MAX);
 
+#ifndef CONFIG_ESPRESSIF_MIPI_DSI
+  /* With no display driver, CSI owns the DW-GDMA interrupt.  When DSI is
+   * enabled it already owns this SoC-wide source and dispatches channel 1 to
+   * esp_mipi_csi_dma_interrupt().
+   */
+
   sched_lock();
   cpuint = esp_setup_irq(DW_GDMA_INTR_SOURCE, ESP_IRQ_PRIORITY_DEFAULT,
-                         ESP_IRQ_TRIGGER_LEVEL, esp_csi_interrupt, priv);
+                         ESP_IRQ_TRIGGER_LEVEL,
+                         esp_mipi_csi_dma_interrupt, NULL);
   if (cpuint >= 0)
     {
       priv->dma_cpuint = cpuint;
@@ -379,6 +404,7 @@ static int esp_csi_hardware_initialize(FAR struct esp_csi_s *priv)
     {
       return cpuint;
     }
+#endif
 
   return OK;
 }
@@ -438,6 +464,9 @@ static int esp_csi_uninit(FAR struct imgdata_s *data)
 
   PERIPH_RCC_ATOMIC()
     {
+      mipi_csi_brg_ll_enable_clock(
+        MIPI_CSI_BRG_LL_GET_HW(CSI_BUS), false);
+      mipi_csi_ll_enable_brg_module_clock(CSI_BUS, false);
       mipi_csi_ll_enable_phy_config_clock(CSI_BUS, false);
       mipi_csi_ll_enable_host_bus_clock(CSI_BUS, false);
     }

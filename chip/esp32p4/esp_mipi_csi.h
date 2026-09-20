@@ -45,6 +45,13 @@ extern "C"
 
 FAR struct imgdata_s *esp_mipi_csi_initialize(void);
 
+/* MIPI DSI and CSI use different DW-GDMA channels but share one peripheral
+ * interrupt source.  When DSI is enabled its ISR dispatches CSI channel
+ * completion through this entry point.
+ */
+
+int esp_mipi_csi_dma_interrupt(int irq, FAR void *context, FAR void *arg);
+
 #ifdef __cplusplus
 }
 #endif
