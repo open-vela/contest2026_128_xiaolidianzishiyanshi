@@ -233,7 +233,7 @@ if(DEFINED ENV{ESP_HAL_3RDPARTY_URL})
       CACHE STRING "ESP HAL 3rdparty URL")
 else()
   set(ESP_HAL_3RDPARTY_URL
-      https://github.com/espressif/esp-hal-3rdparty.git
+      https://github.com/lxydiy/esp-hal-3rdparty.git
       CACHE STRING "ESP HAL 3rdparty URL")
 endif()
 
