@@ -47,7 +47,7 @@
  * routed to the ESP32-P4, therefore the driver uses I2C polling.
  */
 
-#define BOARD_TOUCH_I2C_PORT       1
+#define BOARD_TOUCH_I2C_PORT       0
 #define BOARD_TOUCH_I2C_FREQUENCY  100000
 #define BOARD_TOUCH_WIDTH          1024
 #define BOARD_TOUCH_HEIGHT         600

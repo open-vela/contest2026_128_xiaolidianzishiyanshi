@@ -10,12 +10,12 @@ source "../apps/vendor/espressif/boards/esp32p4/common/Kconfig"
 config ESP32P4_FUNCTION_EV_BOARD_TOUCHSCREEN
 	bool "GT911 touchscreen on the Function EV Board"
 	default n
-	depends on ESPRESSIF_I2C1
+	depends on ESPRESSIF_I2C0
 	select INPUT_TOUCHSCREEN
 	select SCHED_LPWORK
 	---help---
 		Enable the polled GT911 touchscreen on the official 1024x600
-		MIPI-DSI display adapter.  The controller shares I2C1 with other
+		MIPI-DSI display adapter.  The controller shares I2C0 with other
 		board devices and is registered as /dev/input0.  The adapter does
 		not route the GT911 interrupt or reset signals to the ESP32-P4.
 
