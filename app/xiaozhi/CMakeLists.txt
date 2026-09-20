@@ -48,4 +48,48 @@ if(CONFIG_LVX_USE_DEMO_CONTEST2026_128_XIAOZHI)
 
   set_source_files_properties(${XIAOZHI_SOURCES}
     PROPERTIES COMPILE_FLAGS "-std=gnu++17")
+
+  # Build the persistent LittleFS image separately from nuttx.bin.  This keeps
+  # normal firmware updates small and, more importantly, prevents them from
+  # overwriting files created at runtime in /data.  The image/flash targets are
+  # intended for initial provisioning or an explicit data-partition reset.
+
+  get_filename_component(OPENVELA_ROOT "${NUTTX_APPS_DIR}/.." ABSOLUTE)
+  set(XIAOZHI_DATA_DIR "${CMAKE_BINARY_DIR}/xiaozhi-data")
+  set(XIAOZHI_DATA_IMAGE "${CMAKE_BINARY_DIR}/xiaozhi-data.bin")
+  set(XIAOZHI_MKLITTLEFS
+      "${OPENVELA_ROOT}/vendor/artinchip/tools/scripts/mklittlefs")
+
+  add_custom_command(
+    OUTPUT "${XIAOZHI_DATA_IMAGE}"
+    COMMAND ${CMAKE_COMMAND} -E rm -rf "${XIAOZHI_DATA_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${XIAOZHI_DATA_DIR}"
+    COMMAND "${XIAOZHI_MKLITTLEFS}"
+            -c "${XIAOZHI_DATA_DIR}"
+            -b 4096 -p 256 -s 4194304 "${XIAOZHI_DATA_IMAGE}"
+    DEPENDS "${XIAOZHI_MKLITTLEFS}"
+    COMMENT "Creating xiaozhi 4 MiB LittleFS data image"
+    VERBATIM)
+
+  add_custom_target(xiaozhi_data_image DEPENDS "${XIAOZHI_DATA_IMAGE}")
+
+  if(TARGET nuttx_post_build)
+    add_custom_target(
+      xiaozhi_partition_check ALL
+      COMMAND ${CMAKE_COMMAND}
+              -DFIRMWARE_IMAGE=${CMAKE_BINARY_DIR}/nuttx.bin
+              -P "${CMAKE_CURRENT_LIST_DIR}/tools/check_partition.cmake"
+      DEPENDS nuttx_post_build
+      COMMENT "Checking that nuttx.bin does not overlap /data"
+      VERBATIM)
+  endif()
+
+  add_custom_target(
+    xiaozhi_data_flash
+    COMMAND ${CMAKE_COMMAND}
+            -DXIAOZHI_DATA_IMAGE=${XIAOZHI_DATA_IMAGE}
+            -P "${CMAKE_CURRENT_LIST_DIR}/tools/flash_data.cmake"
+    DEPENDS xiaozhi_data_image
+    COMMENT "Flashing xiaozhi LittleFS data partition at 0xC00000"
+    VERBATIM)
 endif()

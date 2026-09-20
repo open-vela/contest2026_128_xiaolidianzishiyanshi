@@ -21,6 +21,18 @@ The relevant outputs are:
 /home/lxy/openvela/cmake_out/esp32p4-function-ev-board_xiaozhi/nuttx.bin
 ```
 
+The 16 MiB SPI flash reserves its last 4 MiB as a writable LittleFS volume:
+
+| Region | Address | Size | Update policy |
+| --- | ---: | ---: | --- |
+| Firmware | `0x00002000` | variable, must end before `0x00c00000` | normal build/flash |
+| `/data` LittleFS | `0x00c00000` | 4 MiB | provision separately |
+
+The filesystem is mounted automatically at `/data`.  As before, board
+bring-up formats it only when mounting fails.  A valid filesystem therefore
+survives reboot and normal `nuttx.bin` updates.  It holds the XiaoZhi client
+identifier and files created by the application.
+
 When invoking CMake directly, first select the OpenVela toolchain:
 
 ```sh
@@ -31,6 +43,21 @@ cmake --build /home/lxy/openvela/cmake_out/esp32p4-function-ev-board_xiaozhi -j8
 
 After every configuration change, check the generated `.config`; do not infer
 the active configuration from an older build directory.
+
+Build the initial data image independently (it is deliberately not part of
+the default firmware target):
+
+```sh
+cmake --build /home/lxy/openvela/cmake_out/esp32p4-function-ev-board_xiaozhi \
+  --target xiaozhi_data_image
+```
+
+This produces
+`/home/lxy/openvela/cmake_out/esp32p4-function-ev-board_xiaozhi/xiaozhi-data.bin`.
+The initial image is empty.  MiSans is compiled into `nuttx.bin` as an
+uncompressed LVGL bitmap font containing ASCII and all 7445 GB2312 double-byte
+characters at 16 px and 2 bpp.  It does not allocate a TTF cache at runtime;
+characters outside GB2312 fall back to LVGL's default Montserrat 16 font.
 
 ## 2. Initial hardware configuration
 
@@ -63,6 +90,29 @@ Use the binary from the same build as the ELF used for debugging:
 ```sh
 openocd -f board/esp32p4-builtin.cfg \
   -c "init; reset halt; program_esp /home/lxy/openvela/cmake_out/esp32p4-function-ev-board_xiaozhi/nuttx.bin 0x2000 verify; reset run; shutdown"
+```
+
+Provision the data partition once, or use the same command when an explicit
+factory reset of `/data` is wanted:
+
+```sh
+ESPTOOL_PORT=/dev/ttyACM0 \
+cmake --build /home/lxy/openvela/cmake_out/esp32p4-function-ev-board_xiaozhi \
+  --target xiaozhi_data_flash
+```
+
+`ESPTOOL_BAUD` can override the default 921600 baud.  This target replaces
+the complete `/data` volume, so it also deletes runtime-created persistent
+files.  Do not run it for routine firmware updates.  Likewise, avoid a
+whole-chip erase or a padded/merged full-flash image when `/data` must be
+kept; the `program_esp ... nuttx.bin 0x2000` command above does not touch the
+partition.
+
+After first boot, verify the persistent mount:
+
+```text
+nsh> mount
+nsh> ls -l /data
 ```
 
 At NSH, first inspect the device nodes:
