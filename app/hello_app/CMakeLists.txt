@@ -42,4 +42,17 @@ if(CONFIG_LVX_USE_DEMO_CONTEST2026_128_LVGL_PPA)
       INCLUDE_DIRECTORIES ${NUTTX_CHIP_ABS_DIR}
       STACKSIZE 32768)
   endif()
+
+  if(CONFIG_LV_USE_DEMO_BENCHMARK)
+    nuttx_add_application(
+      NAME lvglbench_ppa
+      SRCS lvglbench_ppa_main.c lv_draw_ppa_nuttx.c
+      INCLUDE_DIRECTORIES ${NUTTX_CHIP_ABS_DIR}
+      STACKSIZE 32768)
+
+    nuttx_add_application(
+      NAME lvglbench
+      SRCS lvglbench_main.c
+      STACKSIZE 32768)
+  endif()
 endif()

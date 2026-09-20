@@ -48,3 +48,6 @@ config LVX_USE_DEMO_CONTEST2026_128_LVGL_PPA
 		LCD character device and framebuffer backends are supported.  When
 		the LVGL widgets demo is enabled, also build the lvgl_widget application
 		with the same PPA draw unit registered before creating the widgets UI.
+		When the LVGL benchmark demo is enabled, build two otherwise identical
+		benchmark applications: lvglbench_ppa with the PPA draw unit registered,
+		and lvglbench using LVGL's software renderer only.

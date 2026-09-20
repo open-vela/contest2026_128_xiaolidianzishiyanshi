@@ -49,6 +49,16 @@ MAINSRC  += lvgl_widget_main.c
 PRIORITY += SCHED_PRIORITY_DEFAULT
 STACKSIZE += 32768
 endif
+ifneq ($(CONFIG_LV_USE_DEMO_BENCHMARK),)
+PROGNAME += lvglbench_ppa
+MAINSRC  += lvglbench_ppa_main.c
+PRIORITY += SCHED_PRIORITY_DEFAULT
+STACKSIZE += 32768
+PROGNAME += lvglbench
+MAINSRC  += lvglbench_main.c
+PRIORITY += SCHED_PRIORITY_DEFAULT
+STACKSIZE += 32768
+endif
 endif
 
 MODULE    = y

@@ -92,6 +92,14 @@ static bool lv_ppa_fill_supported(lv_draw_task_t *task)
          dsc->grad.dir == LV_GRAD_DIR_NONE;
 }
 
+static bool lv_ppa_target_supported(lv_color_format_t color_format)
+{
+  return color_format == LV_COLOR_FORMAT_RGB565 ||
+         color_format == LV_COLOR_FORMAT_RGB888 ||
+         color_format == LV_COLOR_FORMAT_XRGB8888 ||
+         color_format == LV_COLOR_FORMAT_ARGB8888;
+}
+
 static bool lv_ppa_image_supported(lv_draw_task_t *task)
 {
   lv_draw_image_dsc_t *dsc;
@@ -103,7 +111,7 @@ static bool lv_ppa_image_supported(lv_draw_task_t *task)
 
   dsc = task->draw_dsc;
   return dsc != NULL && dsc->base.layer != NULL &&
-         dsc->base.layer->color_format == LV_COLOR_FORMAT_RGB565 &&
+         lv_ppa_target_supported(dsc->base.layer->color_format) &&
          (dsc->header.cf == LV_COLOR_FORMAT_RGB565 ||
           dsc->header.cf == LV_COLOR_FORMAT_RGB888 ||
           dsc->header.cf == LV_COLOR_FORMAT_XRGB8888 ||
@@ -219,30 +227,34 @@ static bool lv_ppa_is_transform(const lv_draw_image_dsc_t *dsc)
 static void lv_ppa_copy_from_target(const lv_draw_buf_t *target,
                                     uint32_t target_x, uint32_t target_y,
                                     uint8_t *compact, uint32_t width,
-                                    uint32_t height)
+                                    uint32_t height, uint32_t pixel_size)
 {
   const uint8_t *source = target->data +
-                          target_y * target->header.stride + target_x * 2;
+                          target_y * target->header.stride +
+                          target_x * pixel_size;
 
   for (uint32_t row = 0; row < height; row++)
     {
-      memcpy(compact + row * width * 2,
-             source + row * target->header.stride, width * 2);
+      memcpy(compact + row * width * pixel_size,
+             source + row * target->header.stride,
+             width * pixel_size);
     }
 }
 
 static void lv_ppa_copy_to_target(lv_draw_buf_t *target,
                                   uint32_t target_x, uint32_t target_y,
                                   const uint8_t *compact, uint32_t width,
-                                  uint32_t height)
+                                  uint32_t height, uint32_t pixel_size)
 {
   uint8_t *destination = target->data +
-                         target_y * target->header.stride + target_x * 2;
+                         target_y * target->header.stride +
+                         target_x * pixel_size;
 
   for (uint32_t row = 0; row < height; row++)
     {
       memcpy(destination + row * target->header.stride,
-             compact + row * width * 2, width * 2);
+             compact + row * width * pixel_size,
+             width * pixel_size);
     }
 }
 
@@ -282,15 +294,15 @@ static int lv_ppa_fill(struct lv_draw_ppa_nuttx_unit_s *unit,
   lv_draw_fill_dsc_t *dsc = task->draw_dsc;
   lv_draw_buf_t *draw_buf = layer->draw_buf;
   lv_area_t area;
-  size_t alignment = esp32p4_ppa_buffer_alignment();
   size_t required;
   uint32_t width;
   uint32_t height;
+  uint32_t pixel_size;
   uint32_t stride;
   uint8_t *destination;
   int ret;
 
-  if (draw_buf == NULL || layer->color_format != LV_COLOR_FORMAT_RGB565 ||
+  if (draw_buf == NULL || !lv_ppa_target_supported(layer->color_format) ||
       !lv_ppa_get_draw_area(layer, task, &area))
     {
       return -ENOTSUP;
@@ -298,36 +310,33 @@ static int lv_ppa_fill(struct lv_draw_ppa_nuttx_unit_s *unit,
 
   width = (uint32_t)lv_area_get_width(&area);
   height = (uint32_t)lv_area_get_height(&area);
+  pixel_size = lv_ppa_pixel_size(layer->color_format);
   stride = draw_buf->header.stride;
   destination = draw_buf->data;
 
   memset(&config, 0, sizeof(config));
-  config.color = lv_color_to_u16(dsc->color);
-  config.output.buffer = destination;
-  config.output.buffer_size = draw_buf->data_size;
-  config.output.pic_width = draw_buf->header.w;
-  config.output.pic_height = draw_buf->header.h;
+  config.color = layer->color_format == LV_COLOR_FORMAT_RGB565 ?
+                 lv_color_to_u16(dsc->color) :
+                 lv_color_to_u32(dsc->color);
+  /* Always render fills into an adapter-owned DMA buffer.  LVGL draw buffers
+   * can happen to be cache-line aligned without their heap allocation owning
+   * the surrounding DMA/cache-line boundary.  Direct PPA writes can then
+   * corrupt the adjacent LVGL TLSF metadata.  Staging also keeps fills and
+   * image operations under the same buffer-ownership rule.
+   */
+
+  config.output.buffer = NULL;
+  config.output.buffer_size = 0;
+  config.output.pic_width = width;
+  config.output.pic_height = height;
   config.output.block_width = width;
   config.output.block_height = height;
-  config.output.block_offset_x = (uint32_t)(area.x1 - layer->buf_area.x1);
-  config.output.block_offset_y = (uint32_t)(area.y1 - layer->buf_area.y1);
-  config.output.stride_bytes = stride;
-  config.output.color_mode = ESP32P4_PPA_COLOR_MODE_RGB565;
+  config.output.block_offset_x = 0;
+  config.output.block_offset_y = 0;
+  config.output.stride_bytes = width * pixel_size;
+  config.output.color_mode = lv_ppa_color_mode(layer->color_format);
 
-  if (((uintptr_t)destination & (alignment - 1)) == 0 &&
-      (draw_buf->data_size & (alignment - 1)) == 0)
-    {
-      ret = esp32p4_ppa_fill(unit->fill_handle, &config);
-      if (ret >= 0)
-        {
-          unit->stats.fills++;
-          unit->stats.direct++;
-        }
-
-      return ret;
-    }
-
-  if (__builtin_mul_overflow((size_t)width, 2u, &required) ||
+  if (__builtin_mul_overflow((size_t)width, (size_t)pixel_size, &required) ||
       __builtin_mul_overflow(required, (size_t)height, &required))
     {
       return -EOVERFLOW;
@@ -341,11 +350,6 @@ static int lv_ppa_fill(struct lv_draw_ppa_nuttx_unit_s *unit,
 
   config.output.buffer = unit->output.data;
   config.output.buffer_size = unit->output.size;
-  config.output.pic_width = width;
-  config.output.pic_height = height;
-  config.output.block_offset_x = 0;
-  config.output.block_offset_y = 0;
-  config.output.stride_bytes = width * 2;
 
   ret = esp32p4_ppa_fill(unit->fill_handle, &config);
   if (ret < 0)
@@ -354,11 +358,12 @@ static int lv_ppa_fill(struct lv_draw_ppa_nuttx_unit_s *unit,
     }
 
   destination += (area.y1 - layer->buf_area.y1) * stride +
-                 (area.x1 - layer->buf_area.x1) * 2;
+                 (area.x1 - layer->buf_area.x1) * pixel_size;
   for (uint32_t row = 0; row < height; row++)
     {
       memcpy(destination + row * stride,
-             unit->output.data + row * width * 2, width * 2);
+             unit->output.data + row * width * pixel_size,
+             width * pixel_size);
     }
 
   unit->stats.fills++;
@@ -391,6 +396,7 @@ static void lv_ppa_image_core(lv_draw_unit_t *draw_unit,
   uint32_t height;
   uint32_t target_x;
   uint32_t target_y;
+  uint32_t target_pixel_size;
   size_t required;
   bool transform;
   bool needs_blend;
@@ -399,6 +405,7 @@ static void lv_ppa_image_core(lv_draw_unit_t *draw_unit,
   (void)sup;
 
   if (source == NULL || target == NULL || source->data == NULL ||
+      !lv_ppa_target_supported(draw_unit->target_layer->color_format) ||
       source->header.w == 0 || source->header.h == 0 ||
       (source->header.cf != LV_COLOR_FORMAT_RGB565 &&
        source->header.cf != LV_COLOR_FORMAT_RGB888 &&
@@ -545,6 +552,8 @@ static void lv_ppa_image_core(lv_draw_unit_t *draw_unit,
                         draw_unit->target_layer->buf_area.x1);
   target_y = (uint32_t)(output_area.y1 -
                         draw_unit->target_layer->buf_area.y1);
+  target_pixel_size = lv_ppa_pixel_size(
+    draw_unit->target_layer->color_format);
   foreground.block_width = width;
   foreground.block_height = height;
   foreground.block_offset_x =
@@ -556,7 +565,7 @@ static void lv_ppa_image_core(lv_draw_unit_t *draw_unit,
                 foreground_format == LV_COLOR_FORMAT_A8 ||
                 draw_dsc->opa < LV_OPA_MAX || draw_dsc->colorkey != NULL;
 
-  ret = lv_ppa_buffer_size(width, height, 2, &required);
+  ret = lv_ppa_buffer_size(width, height, target_pixel_size, &required);
   if (ret < 0 || (ret = lv_ppa_ensure_buffer(&unit->output, required)) < 0)
     {
       unit->operation_result = ret;
@@ -568,8 +577,10 @@ static void lv_ppa_image_core(lv_draw_unit_t *draw_unit,
       memset(&srm, 0, sizeof(srm));
       srm.input = foreground;
       lv_ppa_picture_init(&srm.output, unit->output.data,
-                          unit->output.size, width, height, width * 2,
-                          ESP32P4_PPA_COLOR_MODE_RGB565);
+                          unit->output.size, width, height,
+                          width * target_pixel_size,
+                          lv_ppa_color_mode(
+                            draw_unit->target_layer->color_format));
       srm.rotation = ESP32P4_PPA_ROTATION_0;
       srm.scale_x = 1.0f;
       srm.scale_y = 1.0f;
@@ -582,7 +593,8 @@ static void lv_ppa_image_core(lv_draw_unit_t *draw_unit,
       if (ret >= 0)
         {
           lv_ppa_copy_to_target(target, target_x, target_y,
-                                unit->output.data, width, height);
+                                unit->output.data, width, height,
+                                target_pixel_size);
           unit->stats.copies++;
           unit->stats.staged++;
         }
@@ -597,15 +609,20 @@ static void lv_ppa_image_core(lv_draw_unit_t *draw_unit,
         }
 
       lv_ppa_copy_from_target(target, target_x, target_y,
-                              unit->background.data, width, height);
+                              unit->background.data, width, height,
+                              target_pixel_size);
       memset(&blend, 0, sizeof(blend));
       blend.foreground = foreground;
       lv_ppa_picture_init(&blend.background, unit->background.data,
-                          unit->background.size, width, height, width * 2,
-                          ESP32P4_PPA_COLOR_MODE_RGB565);
+                          unit->background.size, width, height,
+                          width * target_pixel_size,
+                          lv_ppa_color_mode(
+                            draw_unit->target_layer->color_format));
       lv_ppa_picture_init(&blend.output, unit->output.data,
-                          unit->output.size, width, height, width * 2,
-                          ESP32P4_PPA_COLOR_MODE_RGB565);
+                          unit->output.size, width, height,
+                          width * target_pixel_size,
+                          lv_ppa_color_mode(
+                            draw_unit->target_layer->color_format));
       blend.background_alpha_mode = ESP32P4_PPA_ALPHA_NO_CHANGE;
 
       if (foreground_format == LV_COLOR_FORMAT_ARGB8888 ||
@@ -639,7 +656,8 @@ static void lv_ppa_image_core(lv_draw_unit_t *draw_unit,
       if (ret >= 0)
         {
           lv_ppa_copy_to_target(target, target_x, target_y,
-                                unit->output.data, width, height);
+                                unit->output.data, width, height,
+                                target_pixel_size);
           unit->stats.blends++;
           unit->stats.staged++;
         }
